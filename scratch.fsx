@@ -1,9 +1,6 @@
 open System.Text.RegularExpressions
 
-
-
 type Precedence = int
-
 
 type Symbol = 
 | Plus
@@ -64,7 +61,6 @@ let makeRootOp() =
     }
 
 
-
 module CalcParser =
     
     type ParseResult = 
@@ -119,21 +115,12 @@ module CalcParser =
         | true -> 
             let (matchResult, newS) = 
                 match m.Captures.Count with
-                // | 0 -> Ok (Some s[..m.Length - 1])
                 | 1 -> 
-                    // printfn "%d" m.Captures[0].Length
-                    // printfn "%d" m.Groups[0].Captures[0].Length
-                    // printfn "%d" m.Groups[1].Captures[0].Length
                     (Ok (Some m.Groups[1].Value), s[m.Length ..])
                 | _ -> 
                     let msg = sprintf "More than one group matched in reg exp: %s on string: %s" re s
-                    // printfn "%s" m.Captures[0].Value
-                    // printfn "%s" m.Captures[1].Value
-                    // printfn "%d : %d" m.Captures.Count m.Groups.Count
                     (Error msg), s
 
-            // remove from state the characters we have just consumed
-            // let newS = s[m.Length - 1 ..]
             matchResult, newS    
 
         | false -> 
@@ -177,11 +164,6 @@ module CalcParser =
         let newValueResult, remaining = reApply(reTag, s)      
         match newValueResult with 
         | Ok maybeTag -> 
-            // check that we don't have non-printable characters
-            // check that we don't have illegal characters
-            // ideally we would bind these functions together into one, but for that we woud need to create a wrapper class around the return result of reApply
-            // actually this would be apply - or could be
-            // this could be maade into a computation expression
             match maybeTag with 
             | None -> 
                 ParseOK (None, s)
@@ -209,7 +191,6 @@ module CalcParser =
         | Error msg -> ParseError msg
         
 
-
     let parseString(s:string) =
         let reString: string = sprintf @"^\s*\%c(.+)\%c" quot quot // strings are enclosed in double quotes
         let newValueResult, remaining = reApply(reString, s)      
@@ -230,9 +211,7 @@ module CalcParser =
                     
         | Error msg -> ParseError msg
         
-        
-
-    
+            
     let parseFunctionName(s:string) =
         let reString: string = sprintf @"^\s*([A-Za-z][A-Za-z0-9]*)\s*\(" //function name starts with alpha optionally continues with alphaNum and terminates with open parenthesis
         let newValueResult, remaining = reApply(reString, s)      
@@ -285,24 +264,6 @@ module CalcParser =
             ParseOK (maybeOperator, remaining)
         | Error msg -> ParseError msg
 
-
-
-    // to  start - target = RHS of no-op root
-        // Term (treat unary as a function or binaryOp)
-            // Term = Value | Function |  BinaryOp
-            // Value = [parseString; parseTag; parsePath; parseNumber;]
-            // FunctionName = [parseFunctionName]
-            // BinaryOp = [parseBinaryOp]
-
-    // after function name 
-        // split out and process list of expressions starting with a root for each one
-        // these can be processed independently - which means that the concept of inside function is redundant
-
-    // after Value
-        // BinaryOp
-
-    //  after BinaryOp 
-        // Term (RHS)
 
     let parseAndHandleString(input: string) =
         match parseString(input) with 
@@ -644,13 +605,9 @@ module CalcParser =
 
             | ParseError msg -> Error msg
 
-            
-
         | ParseError msg ->
             Error msg
-    
-    
-    
+        
     
   //> CalcParser.parseExpression("1 + 2 * 3  ^ 4")
   //> CalcParser.parseExpression("1 * (2 + 3)")
