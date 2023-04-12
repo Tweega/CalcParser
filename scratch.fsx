@@ -216,7 +216,7 @@ module CalcParser =
         // after which we would want to separate out on then and else
         //the first clause would split on an equality operator
         // perhapsif  the else  clause is  not given then default to noOutput.
-         
+
         let re = @"^\s*if \s*([^-~]+)\s*end"
         re
 
@@ -649,8 +649,6 @@ module CalcParser =
   //> CalcParser.parseExpression("tagTot(1, 2, 3, 4)")
   //> CalcParser.parseExpression("2")
   //> CalcParser.parseExpression("'Sinusoid'")
-let jj = sprintf "%s%c%s%c%s" "tagTot(" CalcParser.quot "Harry" CalcParser.quot ")"
-let kk = sprintf "%s%s%s" jj " + 1 +  "  jj   
-let yy = 1
-  //> CalcParser.parseExpression(kk)
+let s = "tagTot(\"CDT158\") + tagAvg(\"Sinusoid\")"
+  //> CalcParser.parseExpression(s)
 
