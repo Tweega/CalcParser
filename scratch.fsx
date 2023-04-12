@@ -211,10 +211,19 @@ module CalcParser =
                     
         | Error msg -> ParseError msg
         
-            
+    let parseIfThenElse() = 
+        // to be done. this re gets between if and end on a multiline input
+        // after which we would want to separate out on then and else
+        //the first clause would split on an equality operator
+        // perhapsif  the else  clause is  not given then default to noOutput.
+         
+        let re = @"^\s*if \s*([^-~]+)\s*end"
+        re
+
+
     let parseFunctionName(s:string) =
         let reString: string = sprintf @"^\s*([A-Za-z][A-Za-z0-9]*)\s*\(" //function name starts with alpha optionally continues with alphaNum and terminates with open parenthesis
-        let newValueResult, remaining = reApply(reString, s)      
+        let newValueResult, remaining = reApply(reString, s)
         match newValueResult with 
         | Ok maybeFuncName -> 
         
@@ -228,7 +237,9 @@ module CalcParser =
                     let msg = sprintf "Non printable character in string: %s" s
                     ParseError msg
                 | _ ->
-                    ParseOK (maybeFuncName, remaining)
+                    printfn "Do we get here: %s, %s" str remaining
+                    let remaining' = "(" + remaining //reApply swallows the opening bracket so replace it here
+                    ParseOK (maybeFuncName, remaining')
                     
         | Error msg -> ParseError msg
         
@@ -568,46 +579,62 @@ module CalcParser =
     
     and parseAndHandleFunction(input: string) =
         match parseFunctionName(input) with 
-        | ParseOK (maybeMatch, remaining) -> 
-            let hh = parseBrackets(remaining)
-            match hh with 
-            | ParseOK (maybeMatch', remaining') -> 
-                match maybeMatch with 
-                | Some parameters -> 
-                    // let expressions = parameters.Split ','
-                    // create a root binary operator for each parameter
+        | ParseOK (maybeFuncName, remaining) -> 
+            match maybeFuncName with
+            | None -> 
+                Ok (None, input)
+            | Some funcName ->
+                let parseRes = parseBrackets(remaining)
+                match parseRes with 
+                | ParseOK (maybeMatch', remaining') -> 
+                    match maybeMatch' with 
+                    | Some parameters ->
+                        match parameters.Trim().Length > 0 with 
+                        | false->
+                            let f = (Value (Function (funcName, [])), DataType.Numeric)
+                            Ok (Some f, remaining')
+                        |true -> 
+                            let expressions = parameters.Split ','
+                            // create a root binary operator for each parameter
 
-                    // let results = 
-                    //     expressions |> 
-                    //     List.ofArray |>
-                    //     List.fold(fun acc input' -> 
-                    //         // we could in theory run these in parallel by creating a list of unit functions
-                    //         // let result' = parseExpression(input')
-                    //         // result' :: acc
-                    //         acc
-                    //     ) List<Result<BinaryOp,string>>.Empty
-                    
-                    // now run through the results of each paramter from list<results>
-                    // let jj =
-                    //     results |>
-                    //     List.fold(acc jj ->
-                    //         acc
-                    //     ) Ok ()
+                            let results = 
+                                expressions |> 
+                                List.ofArray |>
+                                List.map parseExpression |>
+                                List.rev                            
+                                
+                            // now run through the results of each paramter from list<results>
+                            // | Function of string * list<TypedTerm> // labelled bracketed expression
+                            
+                            let fTermsRes =
+                                results |>
+                                List.fold(fun (acc: Result<list<Term * DataType>, string>) (res:Result<(Term * DataType),string>) ->
+                                    match acc with 
+                                    | Ok tts ->
+                                        match res with 
+                                        | Ok tt ->
+                                            Ok (tt :: tts)
+                                        | Error msg -> Error msg
+                                    | Error msg -> Error msg
+                                ) (Ok [])
 
-                        // Ok (Some (term, DataType.Numeric), remaining) // assume that attributes return numeric values for the moment
-                    Ok (None, input)
+                                // Ok (Some (term, DataType.Numeric), remaining) // assume that attributes return numeric values for the moment
+                            match fTermsRes with 
+                            | Ok tts -> 
+                                // not sure how we will know the return type  of a function unless it is registered in some way
+                                let f = (Value (Function (funcName, tts)), DataType.Numeric)
+                                Ok (Some f, remaining')
+                            | Error msg -> Error msg
 
-                 | None -> 
-           
-                    // let jj = "12.2" |> (NumericalConst >> Constant >> Value)
-                    // Ok (Some jj, DataType.String, remaining)
-                    Ok (None, input)
+                    | None -> 
+                        Ok (None, input)
 
-            | ParseError msg -> Error msg
+                | ParseError msg -> Error msg
 
         | ParseError msg ->
             Error msg
-        
+
+
     
   //> CalcParser.parseExpression("1 + 2 * 3  ^ 4")
   //> CalcParser.parseExpression("1 * (2 + 3)")
@@ -618,4 +645,12 @@ module CalcParser =
   //> CalcParser.parseExpression("1 * - 1")
   //> CalcParser.parseExpression("3 * - 'Sinusoid'")
   //> CalcParser.parseExpression("'Sinusoid' * 'CDT158'")
+  //> CalcParser.parseExpression("2 + tagTot(1)")
+  //> CalcParser.parseExpression("tagTot(1, 2, 3, 4)")
+  //> CalcParser.parseExpression("2")
+  //> CalcParser.parseExpression("'Sinusoid'")
+let jj = sprintf "%s%c%s%c%s" "tagTot(" CalcParser.quot "Harry" CalcParser.quot ")"
+let kk = sprintf "%s%s%s" jj " + 1 +  "  jj   
+let yy = 1
+  //> CalcParser.parseExpression(kk)
 
