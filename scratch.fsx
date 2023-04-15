@@ -652,6 +652,9 @@ module CalcParser =
 
 
     let rec processCalcTree<'T>((term, dt): TypedTerm, inputs: list<Value * DataType>, operators:list<CalcOp<'T>>, opMap: Map<Symbol, OpFunc<'T>> ) : list<Value * DataType> * list<CalcOp<'T>> = 
+        // code in here is ugly due to a binary tree being both a binaryOp and a Value
+        // simplifying the ccode, though  means duplicating all  of the data structures
+        // which is also inelegant, but probably the lesser of two evils
         
         match term with 
         | Value v ->
@@ -660,7 +663,7 @@ module CalcParser =
                 // recast as BinaryOp and call processTree again.
                 processCalcTree((BinaryOp bop, dt), inputs, operators, opMap)
             | _ -> 
-                (v, dt) :: inputs , operators
+                (v, dt) :: inputs, operators
 
         | BinaryOp bop ->             
             match bop.LHS, bop.RHS with 
@@ -669,9 +672,64 @@ module CalcParser =
                 let rhsQueue = getQueue(rhsTerm)
                 let sym = fst(bop.Operator)
                 let funcImpl =  Map.find sym opMap // we could check here that lhsDT and rhsDT are the same
+                let operators' = (funcImpl, lhsQueue, rhsQueue) :: operators
 
-                let (inputs', operators') = processCalcTree((rhsTerm, rhsDT), inputs, ((funcImpl, lhsQueue, rhsQueue) :: operators), opMap)
-                processCalcTree((lhsTerm, lhsDT), inputs', operators', opMap)
+                // if lhs is a value, need to lay that down before processing rhs, unless rhs is a value in which case it goes down first
+                match rhsTerm with 
+                | BinaryOp _rBop -> 
+                    printfn "rhs term is binary"
+
+                    match lhsTerm with
+                    | BinaryOp _lBop -> 
+                        // these are both binary ops - process the rhs first
+                        printfn "lhs term is binary"
+                        let (inputs', operators'') = processCalcTree((rhsTerm, rhsDT), inputs, operators', opMap)
+                        processCalcTree((lhsTerm, lhsDT), inputs', operators'', opMap)
+                    | Value v ->
+                        printfn "lhs term is value"
+
+                        match v with 
+                        | BinaryOpValue _bopV -> 
+                            printfn "lhs term is binary VALUE"
+                            // this is actually a binary operator so process rhs first
+                            let (inputs', operators'') = processCalcTree((rhsTerm, rhsDT), inputs, operators', opMap)
+                            processCalcTree((lhsTerm, lhsDT), inputs', operators'', opMap)
+                        | _ ->  
+                            // lay lhs value down in inputs before processing rhs
+                            printfn "Are we getting  here??"
+                            let (inputs', operators'') = processCalcTree((lhsTerm, lhsDT), inputs, operators', opMap)
+                            processCalcTree((rhsTerm, rhsDT), inputs', operators'', opMap)
+                | Value v ->
+                    printfn "rhs term is value"
+                    match v with 
+                    | BinaryOpValue _bopV -> 
+                        printfn "rhs term is binary VALUE"
+                        //check if lhs is value
+                        match lhsTerm with 
+                        | BinaryOp _lBop -> 
+                            // these are both binary ops - process the rhs first
+                            printfn "lhs term is binary"
+                            let (inputs', operators'') = processCalcTree((rhsTerm, rhsDT), inputs, operators', opMap)
+                            processCalcTree((lhsTerm, lhsDT), inputs', operators'', opMap)
+                        | Value v ->
+                            printfn "lhs term is value"
+
+                            match v with 
+                            | BinaryOpValue _bopV -> 
+                                printfn "lhs term is binary VALUE"
+                                // this is actually a binary operator so process rhs first
+                                let (inputs', operators'') = processCalcTree((rhsTerm, rhsDT), inputs, operators', opMap)
+                                processCalcTree((lhsTerm, lhsDT), inputs', operators'', opMap)
+                            | _ ->  
+                                // lay lhs value down in inputs before processing rhs
+                                printfn "Are we getting  here??"
+                                let (inputs', operators'') = processCalcTree((lhsTerm, lhsDT), inputs, operators', opMap)
+                                processCalcTree((rhsTerm, rhsDT), inputs', operators'', opMap)
+                    | _ ->
+                        // process the rhs first regardless of lhs
+                        let (inputs', operators'') = processCalcTree((rhsTerm, rhsDT), inputs, operators', opMap)
+                        processCalcTree((lhsTerm, lhsDT), inputs', operators'', opMap)
+                    
 
             | _ -> 
                 //we will have to wrap this up in a Result, but for now log and drop out
@@ -800,19 +858,18 @@ module CalcParser =
                 infinity
 
     
-  //> let simple = CalcParser.testParsExpression("1 + 2")
-
-  //> let moreComplex = CalcParser.testParsExpression("1 + 2 * 3")
+let simple = CalcParser.testParsExpression("1 + 2")
+let moreComplex = CalcParser.testParsExpression("1 + 2 * 3")
   
   //> CalcParser.parseExpression("1 + 2 * 3  ^ 4")
 
-  //> let withBracket = CalcParser.testParsExpression("1 * (2 + 3)")
+let withBracket = CalcParser.testParsExpression("1 * (2 + 3)")
   
   //> CalcParser.parseExpression("(2 + 3) * 4")
   //> CalcParser.parseExpression("1 + (4 * 5)")
   //> CalcParser.parseExpression("(1 + 2) + (4 * 5)")
 
-  //> let moreComplexEval = CalcParser.testParsExpression("(1 + 2) + (3 * 4) * 5")
+let moreComplexEval = CalcParser.testParsExpression("(1 + 2) + (3 * 4) * 5")
   //> let moreComplexEval = CalcParser.testParsExpression("1 + 2 + 3 * 4 * 5")
   
   //> CalcParser.parseExpression("1 * - 1")
@@ -831,5 +888,5 @@ let s = "tagTot(\"CDT158\") + tagAvg(\"Sinusoid\")"
   // let plusEval = CalcParser.testParsExpression("1 + 2")
 simple([123;321])
 moreComplexEval([1;2;3;4;5])
-moreComplex([1;2;3])
+moreComplex([2;3;1])
 withBracket([1;2;3])
