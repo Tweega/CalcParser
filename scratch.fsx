@@ -652,3 +652,77 @@ module CalcParser =
 let s = "tagTot(\"CDT158\") + tagAvg(\"Sinusoid\")"
   //> CalcParser.parseExpression(s)
 
+let plus (a: int)(b:int) =
+    a + b
+
+let times (a: int)(b:int) =
+    a * b
+
+// this only works once.  i want to keep adding operators (int -> int -> int) to make longer and longer functions
+// which may not be possible since the specific types won't be known ahead of time.
+let combineOps (f1: int -> int -> int, f2: int -> int -> int) =
+    fun a b c ->
+        c |> ((f1 a b) |> f2)
+    
+let plusTimes = combineOps(plus, times)
+
+// let plusTimesPlus = combineOps(plusTimes,plus)
+// let  hh = plus >> times
+
+// we can't use composition to solve this because the signature keeps  growing - we have to use application
+let jj(i: int) = 
+    fun (j: int) ->
+        fun(k: int) ->
+            i + j+ k
+
+
+// for composition to work we need to apply function to values as we compose which sort of defeats the idea of composition
+// a possible alternative might be to pass around a list of values
+
+let composeIntOps(f1:list<int> -> list<int>, f2:list<int> -> list<int>): (list<int> -> list<int>) = 
+    fun (ints: list<int>)  -> 
+        ints |> (f1 >> f2)
+
+let doOpInt (op: int -> int -> int) (ints:list<int>) : list<int> = 
+    // take two ints off the stack,  perform the addition and then replace value onto the stack
+    // at some point the stack should be empty and we put the final answer into the stack
+    match ints with
+    | arg1 :: arg2 :: t -> 
+        (op arg1 arg2) :: t
+    | _ -> 
+        // if we don't have 2 values on the stack this would be an error
+        // we could return a Result, so on the stack would be an Ok ints or an Error str
+        //orwe could just return some int and assume that the expression is valid before we start
+        [-12321]  
+
+let doOp (op: float -> float -> float) (ints:list<float>) : list<float> = 
+    // take two ints off the stack,  perform the addition and then replace value onto the stack
+    // at some point the stack should be empty and we put the final answer into the stack
+    match ints with
+    | arg1 :: arg2 :: t -> 
+        (op arg1 arg2) :: t
+    | _ -> 
+        // if we don't have 2 values on the stack this would be an error
+        // we could return a Result, so on the stack would be an Ok ints or an Error str
+        //orwe could just return some int and assume that the expression is valid before we start
+        [-12321.1]  
+
+
+let plusOp (ints:list<float>) : list<float> = 
+    doOp (+) ints
+
+let minuOp (ints:list<float>) : list<float> = 
+    doOp (-) ints
+
+let multiplyOp (ints:list<float>) : list<float> = 
+    let mult = fun (f1: float) (f2: float) -> f1 * f2 // ionide handles (*) ok but highlights in red
+    doOp mult ints
+
+let divideOp (ints:list<float>) : list<float> = 
+    doOp (/) ints
+
+let powerOp (ints:list<float>) : list<float> = 
+    let pow = fun (f1: float) (f2: float) -> f1 ** f2 // can't use (**) directly ionide complains
+    doOp pow ints
+
+
