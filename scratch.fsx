@@ -53,6 +53,14 @@ and Term =
 
 and TypedTerm = Term * DataType
 
+[RequireQualifiedAccessAttribute]
+type DataQueue = 
+| Input
+| Output
+
+type OpFunc<'T> = ('T * 'T -> 'T) 
+type CalcOp<'T> = OpFunc<'T> * DataQueue * DataQueue  //make intoa record?
+
 let makeRootOp() =
     {
         Operator = noOp;
@@ -86,8 +94,8 @@ module CalcParser =
 
     [RequireQualifiedAccessAttribute]
     type TermType =
-        | Float of IntegralPart * FractionPart
-        | String of string
+    | Float of IntegralPart * FractionPart
+    | String of string
 
     let quot = '\u0022'
     
@@ -634,14 +642,179 @@ module CalcParser =
         | ParseError msg ->
             Error msg
 
+    let getQueue(t: Term) = 
+        match t with 
+        | Value v-> 
+            match v with 
+            | BinaryOpValue _bop -> DataQueue.Output
+            | _-> DataQueue.Input
+        | BinaryOp _bop -> DataQueue.Output
+
+
+    let rec processCalcTree<'T>((term, dt): TypedTerm, inputs: list<Value * DataType>, operators:list<CalcOp<'T>>, opMap: Map<Symbol, OpFunc<'T>> ) : list<Value * DataType> * list<CalcOp<'T>> = 
+        
+        match term with 
+        | Value v ->
+            match v with 
+            | BinaryOpValue bop -> 
+                // recast as BinaryOp and call processTree again.
+                processCalcTree((BinaryOp bop, dt), inputs, operators, opMap)
+            | _ -> 
+                (v, dt) :: inputs , operators
+
+        | BinaryOp bop ->             
+            match bop.LHS, bop.RHS with 
+            | Some (lhsTerm, lhsDT), Some (rhsTerm, rhsDT) -> 
+                let lhsQueue = getQueue(lhsTerm)                   
+                let rhsQueue = getQueue(rhsTerm)
+                let sym = fst(bop.Operator)
+                let funcImpl =  Map.find sym opMap // we could check here that lhsDT and rhsDT are the same
+
+                let (inputs', operators') = processCalcTree((rhsTerm, rhsDT), inputs, ((funcImpl, lhsQueue, rhsQueue) :: operators), opMap)
+                processCalcTree((lhsTerm, lhsDT), inputs', operators', opMap)
+
+            | _ -> 
+                //we will have to wrap this up in a Result, but for now log and drop out
+                // alternatively we could prevalidate and work on validated structures
+                printfn "Error:  Need LHS and RHS in Binary Operator %A" bop
+                inputs, operators
+
+
+    let plus (a: float, b:float) =
+        printfn "adding %f, %f" a b
+        a + b
+
+    let minus (a: float, b:float) =
+        printfn "subtracting %f, %f" a b
+
+        a - b
+
+    let multiply (a: float, b:float) =
+        printfn "multiplying %f, %f" a b
+
+        a * b
+
+    let divide (a: float, b:float) =
+        printfn "dividing %f, %f" a b
+
+        a / b
+
+    let power (a: float, b:float) =
+        a ** b
+    
+    let modulo (a: float, b:float) =
+        a % b
+
+    let getValue<'T>(dataQ, inputs: list<'T>, outputs: list<'T>) = 
+        match dataQ with 
+        | DataQueue.Input ->
+            match inputs with 
+            | [] -> 
+                printfn "No value in inputs"
+                None, inputs, outputs
+            | h :: t -> (Some h, t, outputs)
+        | DataQueue.Output ->
+            match outputs with 
+            | [] -> 
+                printfn "No value in outputs"
+                None, inputs, outputs
+            | h :: t -> Some h, inputs, t
+
+
+    let createCalcEvaluator<'T>(ops:list<CalcOp<'T>>) = 
+        //pass in number of args? tk
+        // how will this work with functions, where the inputs may have different types? tk
+        // ideally functions will not have to unbox all their inputs, but that might be the only way to do it
+        fun(inputs: list<'T>) ->
+            // validate number of inputs?
+            // iterate through each calOp and pass it the inputs and outputs lists
+            // let inputsRev = List.rev inputs
+            let outputs: list<'T> = []
+            let (ins, outs) =
+                ops |>
+                List.fold(fun (inAcc, outAcc) (opFunc, lhsQ, rhsQ) -> 
+                    let (lhsVal: option<'T>, inputs': list<'T>,  outputs': list<'T>) = getValue(lhsQ, inAcc, outAcc)
+                    let (rhsVal: option<'T>, inputs'': list<'T>,  outputs'': list<'T>) = getValue(rhsQ, inputs', outputs')
+                    match (lhsVal,rhsVal) with 
+                    | (Some lhs, Some rhs) ->
+                        let t:'T = opFunc(lhs, rhs)
+                        (inputs'', t :: outputs'')
+                    | _ -> 
+                        printfn "Not enough values" // we should validate initial input length at the beginning
+                        (inputs, outputs)
+                ) (inputs, outputs)
+
+            // check if there are unused inputs
+            
+            match ins with 
+            | _h :: _ -> Error "Unused inputs"
+            | _ -> 
+                match outs with 
+                | [] ->  Error "No outputs"
+                | [h] ->
+                    Ok h
+                | _ ->
+                    Error "Unused inputs"
+
+            
+
+        
+
+
+    let testParsExpression(expr:string) = 
+        let exprRes = parseExpression(expr) // these values are just placeholders though they are returned from processCalcTree
+
+        match exprRes with 
+        | Ok binOp -> 
+            printfn "%A" binOp
+            let opMap = 
+                [
+                    (Plus, plus)
+                    (Minus, minus)
+                    (Multiply, multiply)
+                    (Divide, divide)
+                    // (NoOp, this would be an error)
+                    (Power, power)
+                    (Modulo, modulo)
+                ] 
+                |> Map.ofList
+                
+            
+            let inputs, operators = processCalcTree(binOp, [], [], opMap)
+            
+            printfn "%A" inputs
+            printfn "%A" operators
+            
+            let evaluator = createCalcEvaluator(operators)
+            
+            fun (ts: list<float>) ->
+                match ts |> evaluator  with 
+                | Ok v -> v
+                | Error msg ->  
+                    printfn "%s" msg
+                    infinity
+            // Ok (inputs, operators)
+        | Error msg -> 
+            fun (ts: list<float>) ->
+                printfn "Error: %s" msg
+                infinity
 
     
+  //> let simple = CalcParser.testParsExpression("1 + 2")
+
+  //> let moreComplex = CalcParser.testParsExpression("1 + 2 * 3")
+  
   //> CalcParser.parseExpression("1 + 2 * 3  ^ 4")
-  //> CalcParser.parseExpression("1 * (2 + 3)")
+
+  //> let withBracket = CalcParser.testParsExpression("1 * (2 + 3)")
+  
   //> CalcParser.parseExpression("(2 + 3) * 4")
   //> CalcParser.parseExpression("1 + (4 * 5)")
   //> CalcParser.parseExpression("(1 + 2) + (4 * 5)")
-  //> CalcParser.parseExpression("(1 + 2) + (4 * 5) / 6")
+
+  //> let moreComplexEval = CalcParser.testParsExpression("(1 + 2) + (3 * 4) * 5")
+  //> let moreComplexEval = CalcParser.testParsExpression("1 + 2 + 3 * 4 * 5")
+  
   //> CalcParser.parseExpression("1 * - 1")
   //> CalcParser.parseExpression("3 * - 'Sinusoid'")
   //> CalcParser.parseExpression("'Sinusoid' * 'CDT158'")
@@ -652,77 +825,11 @@ module CalcParser =
 let s = "tagTot(\"CDT158\") + tagAvg(\"Sinusoid\")"
   //> CalcParser.parseExpression(s)
 
-let plus (a: int)(b:int) =
-    a + b
+  //> let expr = CalcParser.parseExpression("1 + 2")
 
-let times (a: int)(b:int) =
-    a * b
-
-// this only works once.  i want to keep adding operators (int -> int -> int) to make longer and longer functions
-// which may not be possible since the specific types won't be known ahead of time.
-let combineOps (f1: int -> int -> int, f2: int -> int -> int) =
-    fun a b c ->
-        c |> ((f1 a b) |> f2)
-    
-let plusTimes = combineOps(plus, times)
-
-// let plusTimesPlus = combineOps(plusTimes,plus)
-// let  hh = plus >> times
-
-// we can't use composition to solve this because the signature keeps  growing - we have to use application
-let jj(i: int) = 
-    fun (j: int) ->
-        fun(k: int) ->
-            i + j+ k
-
-
-// for composition to work we need to apply function to values as we compose which sort of defeats the idea of composition
-// a possible alternative might be to pass around a list of values
-
-let composeIntOps(f1:list<int> -> list<int>, f2:list<int> -> list<int>): (list<int> -> list<int>) = 
-    fun (ints: list<int>)  -> 
-        ints |> (f1 >> f2)
-
-let doOpInt (op: int -> int -> int) (ints:list<int>) : list<int> = 
-    // take two ints off the stack,  perform the addition and then replace value onto the stack
-    // at some point the stack should be empty and we put the final answer into the stack
-    match ints with
-    | arg1 :: arg2 :: t -> 
-        (op arg1 arg2) :: t
-    | _ -> 
-        // if we don't have 2 values on the stack this would be an error
-        // we could return a Result, so on the stack would be an Ok ints or an Error str
-        //orwe could just return some int and assume that the expression is valid before we start
-        [-12321]  
-
-let doOp (op: float -> float -> float) (ints:list<float>) : list<float> = 
-    // take two ints off the stack,  perform the addition and then replace value onto the stack
-    // at some point the stack should be empty and we put the final answer into the stack
-    match ints with
-    | arg1 :: arg2 :: t -> 
-        (op arg1 arg2) :: t
-    | _ -> 
-        // if we don't have 2 values on the stack this would be an error
-        // we could return a Result, so on the stack would be an Ok ints or an Error str
-        //orwe could just return some int and assume that the expression is valid before we start
-        [-12321.1]  
-
-
-let plusOp (ints:list<float>) : list<float> = 
-    doOp (+) ints
-
-let minuOp (ints:list<float>) : list<float> = 
-    doOp (-) ints
-
-let multiplyOp (ints:list<float>) : list<float> = 
-    let mult = fun (f1: float) (f2: float) -> f1 * f2 // ionide handles (*) ok but highlights in red
-    doOp mult ints
-
-let divideOp (ints:list<float>) : list<float> = 
-    doOp (/) ints
-
-let powerOp (ints:list<float>) : list<float> = 
-    let pow = fun (f1: float) (f2: float) -> f1 ** f2 // can't use (**) directly ionide complains
-    doOp pow ints
-
-
+  // CalcParser.createCalcDef(expr)
+  // let plusEval = CalcParser.testParsExpression("1 + 2")
+simple([123;321])
+moreComplexEval([1;2;3;4;5])
+moreComplex([1;2;3])
+withBracket([1;2;3])
