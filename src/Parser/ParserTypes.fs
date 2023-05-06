@@ -4,7 +4,8 @@ module ParserTypes =
 
     type Precedence = int
 
-    type Symbol = 
+    
+    type ArithmeticSymbol = 
     | Plus
     | Minus
     | Multiply
@@ -13,7 +14,18 @@ module ParserTypes =
     | Power
     | Modulo
 
-    type BinaryOperator = Symbol * Precedence
+    type ComparatorSymbol = 
+    | Equals
+    | LessThan
+    | GreaterThan
+    | LessThanOrEquals
+    | GreaterThanOrEquals
+
+    type BinaryOperator = 
+    | Operator of ArithmeticSymbol * Precedence
+    | Comparator of ComparatorSymbol
+
+    //type BinaryOperator = Symbol //* Precedence // precedence only makes sense for arithmetic operators? tk
 
     type DataType = 
     | Numeric
@@ -21,14 +33,6 @@ module ParserTypes =
     | Unknown
 
     // | Boolean?
-
-    let noOp = NoOp, 0
-    let opPlus = Plus, 1
-    let opMinus = Minus, 1
-    let opModulo = Modulo, 1 
-    let opMultiply = Multiply, 2
-    let opDivide = Divide, 2
-    let opPower = Power, 3
 
     type Constant = 
     | StringConst of string
@@ -62,3 +66,24 @@ module ParserTypes =
 
     type OpFunc<'T> = ('T * 'T -> 'T) 
     type CalcOp<'T> = OpFunc<'T> * DataQueue * DataQueue  //make into a record?
+
+    type ParseResult = 
+        | ParseOK of option<string> * string //text matching re, remaining string to parse, accumulator
+        | ParseError of string
+
+        type Unary = 
+            | Unary of BinaryOperator
+            static member Combine(unaryA: Unary, unaryB: Unary) = 
+                match (unaryA, unaryB) with
+                | Unary (Operator (Plus, prec)), Unary (Operator (Plus, _)) -> Ok (Unary (Operator (Plus, prec)))
+                | Unary (Operator (Minus, prec)), Unary (Operator (Minus, _)) -> Ok (Unary (Operator (Plus, prec)))
+                | Unary (Operator (Plus, prec)), Unary (Operator (Minus, _)) -> Ok (Unary (Operator (Minus, prec)))
+                | Unary (Operator (Minus, prec)), Unary (Operator (Plus, _)) -> Ok (Unary (Operator (Minus, prec)))
+                | _ -> Error "Only Plus and Minus accepted as unary operators"
+    
+    type Expecting  =
+    | BinOp
+    | Val of Unary
+
+    type IntegralPart = int
+    type FractionPart = int

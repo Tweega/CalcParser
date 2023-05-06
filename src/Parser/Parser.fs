@@ -4,33 +4,23 @@ module CalcParser =
     open ParserTypes
     open System.Text.RegularExpressions
 
-    type ParseResult = 
-    | ParseOK of option<string> * string //text matching re, remaining string to parse, accumulator
-    | ParseError of string
-
-    type Unary = 
-        | Unary of BinaryOperator
-        static member Combine(unaryA: Unary, unaryB: Unary) = 
-            match (unaryA, unaryB) with
-            | Unary (Plus, prec), Unary (Plus, _) -> Ok (Unary (Plus, prec))
-            | Unary (Minus, prec), Unary (Minus, _) -> Ok (Unary (Plus, prec))
-            | Unary (Plus, prec), Unary (Minus, _) -> Ok (Unary (Minus, prec))
-            | Unary (Minus, prec), Unary (Plus, _) -> Ok (Unary (Minus, prec))
-            | _ -> Error "Only Plus and Minus accepted as unary operators"
     
-    type Expecting  =
-    | BinOp
-    | Val of Unary
-
-    type IntegralPart = int
-    type FractionPart = int
-
     [<RequireQualifiedAccessAttribute>]
     type TermType =
     | Float of IntegralPart * FractionPart
     | String of string
 
     let quot = '\u0022'
+
+    
+    let noOp = Operator (NoOp, 0)
+    let opPlus = Operator (Plus, 1)
+    let opMinus = Operator (Minus, 1)
+    let opModulo = Operator (Modulo, 1) 
+    let opMultiply = Operator (Multiply, 2)
+    let opDivide = Operator (Divide, 2)
+    let opPower = Operator (Power, 3)
+
     
     let composeParsers(f1: string -> Result<Option<TypedTerm> * string, string>) (f2: string -> Result<option<TypedTerm> * string, string>) =
         // composeParsers strings parsers together but is equivalent to oneOf in that it returns after the first successful parse
@@ -371,8 +361,15 @@ module CalcParser =
                             match rhsTerm with
                             | Value _v ->
                                 // compare precedences  -we could just look these up when we need to tk
-                                let (_rhsSym, rhsPrec) = rhsOp.Operator
-                                let (_lhsSym, lhsPrec) = lhsOp.Operator
+                                
+                                let rhsPrec = // things more complex with comparative operators which don't have precedence
+                                    match rhsOp.Operator with 
+                                    | Operator (_rhsSym, rhsPrec) -> rhsPrec
+                                    | Comparator _j -> 0 // comarator as rhs?
+                                let lhsPrec = 
+                                    match lhsOp.Operator with 
+                                    | Operator (_lhsSym, lhsPrec) -> lhsPrec
+                                    | Comparator _j -> 0 // comarator as lhs?
                                 
                                 match rhsPrec > lhsPrec with 
                                 | true -> 
@@ -472,11 +469,11 @@ module CalcParser =
                                 | Error msg -> Error msg
                             | Value v ->
                                 match unary with 
-                                | Unary (Plus, _) ->
+                                | Unary (Operator (Plus, _)) ->
                                     // add the value as is to values list
                                     let values' = (v, dt) :: values
                                     gatherTerms(remaining', values', binOps, Expecting.BinOp)
-                                | Unary (Minus, _) ->
+                                | Unary (Operator (Minus, _)) ->
                                     // multiply value by -1 if it is a constant number 
                                     // check  that dt is Numeric otherwose error
                                     match v with 
@@ -620,9 +617,9 @@ module CalcParser =
         | BinaryOp _bop -> DataQueue.Output
 
 
-    let rec processCalcTree<'T>((term, dt): TypedTerm, inputs: list<Value * DataType>, operators:list<CalcOp<'T>>, opMap: Map<Symbol, OpFunc<'T>> ) : list<Value * DataType> * list<CalcOp<'T>> = 
+    let rec processCalcTree<'T>((term, dt): TypedTerm, inputs: list<Value * DataType>, operators:list<CalcOp<'T>>, opMap: Map<BinaryOperator, OpFunc<'T>> ) : list<Value * DataType> * list<CalcOp<'T>> = 
         // code in here is ugly due to a binary tree being both a binaryOp and a Value
-        // simplifying the ccode, though  means duplicating all  of the data structures
+        // simplifying the code, though  means duplicating all  of the data structures
         // which is also inelegant, but probably the lesser of two evils
 
         match term with 
@@ -639,7 +636,7 @@ module CalcParser =
             | Some (lhsTerm, lhsDT), Some (rhsTerm, rhsDT) -> 
                 let lhsQueue = getQueue(lhsTerm)                   
                 let rhsQueue = getQueue(rhsTerm)
-                let sym = fst(bop.Operator)
+                let sym = bop.Operator
                 let funcImpl =  Map.find sym opMap // we could check here that lhsDT and rhsDT are the same
                 let operators' = (funcImpl, lhsQueue, rhsQueue) :: operators
 
@@ -796,13 +793,13 @@ module CalcParser =
             printfn "%A" binOp
             let opMap = 
                 [
-                    (Plus, plus)
-                    (Minus, minus)
-                    (Multiply, multiply)
-                    (Divide, divide)
-                    // (NoOp, this would be an error)
-                    (Power, power)
-                    (Modulo, modulo)
+                    (opPlus, plus)
+                    (opMinus, minus)
+                    (opMultiply, multiply)
+                    (opDivide, divide)
+                    // (Operator NoOp, this would be an error)
+                    (opPower, power)
+                    (opModulo, modulo)
                 ] 
                 |> Map.ofList
                             

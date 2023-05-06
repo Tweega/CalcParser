@@ -10,4 +10,5 @@ open Parser.CalcParser
 // printfn "%A" hh
 
 let jollyNested = Parser.CalcParser.testParseExpression("5 * ((1 + 2) * (3 + 4))")
-//jollyNested([1;2;3;4;5])
+let ans = jollyNested([1;2;3;4;5])
+printfn "%f" ans
