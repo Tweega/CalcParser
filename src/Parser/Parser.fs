@@ -13,14 +13,7 @@ module CalcParser =
     let quot = '\u0022'
 
     
-    let noOp = Operator (NoOp, 0)
-    let opPlus = Operator (Plus, 1)
-    let opMinus = Operator (Minus, 1)
-    let opModulo = Operator (Modulo, 1) 
-    let opMultiply = Operator (Multiply, 2)
-    let opDivide = Operator (Divide, 2)
-    let opPower = Operator (Power, 3)
-
+    
     
     let composeParsers(f1: string -> Result<Option<TypedTerm> * string, string>) (f2: string -> Result<option<TypedTerm> * string, string>) =
         // composeParsers strings parsers together but is equivalent to oneOf in that it returns after the first successful parse
@@ -293,7 +286,6 @@ module CalcParser =
             Error msg
     
     
-    
     let parseAndHandleBinaryOperator(input: string) =
         match parseOperator(input) with 
 
@@ -448,7 +440,7 @@ module CalcParser =
                     match maybeTerm with 
                     | Some (term, dt) -> 
                         match expecting with 
-                        | BinOp ->
+                        | Expecting.BinOp ->
                             match term with 
                             | Value _v -> 
                                 let msg = "Expecting Binary Operator, but got value"
@@ -458,7 +450,7 @@ module CalcParser =
                                 // printfn "Adding bin op to list %A" binOp
                                 let binOps' = binOp :: binOps
                                 gatherTerms(remaining', values, binOps', Expecting.Val (Unary opPlus))
-                        | Val unary ->
+                        | Expecting.Val unary ->
                             match term with 
                             | BinaryOp bop ->
                                 // treat this as a unary operator
@@ -469,11 +461,11 @@ module CalcParser =
                                 | Error msg -> Error msg
                             | Value v ->
                                 match unary with 
-                                | Unary (Operator (Plus, _)) ->
+                                | Unary (Operator (ArithmeticSymbol (Plus, _), _)) ->
                                     // add the value as is to values list
                                     let values' = (v, dt) :: values
                                     gatherTerms(remaining', values', binOps, Expecting.BinOp)
-                                | Unary (Operator (Minus, _)) ->
+                                | Unary (Operator (ArithmeticSymbol (Minus, _), _)) ->
                                     // multiply value by -1 if it is a constant number 
                                     // check  that dt is Numeric otherwose error
                                     match v with 
@@ -822,3 +814,84 @@ module CalcParser =
                 printfn "Error: %s" msg
                 infinity
 
+    let rec expressionFromTerm(term: Term) = 
+        // we need to know if operators are associative or not (a - b) - c != a - (b - c)
+        let valueToString(v: Value) = 
+            match v with 
+            | Tag tag -> sprintf @"'%s'" tag
+            | Constant c -> 
+                match c with 
+                | StringConst strConst -> strConst
+                | NumericalConst numConst -> (string) numConst
+
+            | Path path -> path
+            | BinaryOpValue binOp -> 
+                //  would not expect to come here when serialising an expression tree but add brackets for  now which is how binary op values are created
+                printfn "We have a BinaryOpValue in expressionFromTerm - which is unexpected"
+                expressionFromTerm(BinaryOp binOp)
+                |> fun s -> "(" + s + ")" 
+
+            | Function (fName, _) -> sprintf "Function: %s" fName
+        
+        // let b: BinaryOp = 9
+        let rec dodah(acc: list<string>, t: Term, parentPrecedence: Precedence) : list<string>= 
+            match t with 
+            | Value v -> 
+                let  s = valueToString(v)
+                s :: acc
+                
+            | BinaryOp bOp ->
+                let thisPrec, thisAssoc = 
+                    match bOp.Operator with 
+                    | Operator (ArithmeticSymbol(_sym, isAssoc) , prec) -> prec, isAssoc
+                    | Comparator _comparator ->(0, false) //grouping always matters with a comparator
+                
+                let acc2 = 
+                    match parentPrecedence > thisPrec with 
+                    | true -> "{" :: acc // we may never get here as any input in brackets becomes an opValue
+                    | false -> acc 
+                
+                let accLHS = 
+                    match bOp.LHS with 
+                    | Some (lhsTerm,  _lhsDT) -> 
+                        match lhsTerm with 
+                        | Value v ->  
+                            let  s = valueToString(v)
+                            s :: acc2
+
+                        | BinaryOp lhsOp -> 
+                            dodah(acc2, BinaryOp lhsOp, thisPrec)
+
+                    | None -> "Error no LHS term" :: acc2 // this would be an error - we should return a result
+
+                let accOp = bOp.Operator.OpToString() :: accLHS
+
+                let accRHS= 
+                    match bOp.RHS with 
+                    | Some (rhsTerm,  _rhsDT) -> 
+                
+                        match rhsTerm with 
+                        | Value v ->  
+                            let  s = valueToString(v)
+                            s :: accOp
+
+                        | BinaryOp rhsOp -> 
+                                    
+                            let precedence = 
+                                match thisAssoc with 
+                                | true -> thisPrec
+                                | false -> 99 //force rhs to wrap itself in parentheses
+                            dodah(accOp, BinaryOp rhsOp, thisPrec)
+                            
+                    | None -> "Error no RHS term" :: acc // this would be an error - we should return a result
+                        
+            
+                match parentPrecedence > thisPrec with 
+                | true -> "}" :: accRHS
+                | false -> accRHS
+
+                
+        dodah([], term, -1)
+        |> List.rev
+        |> List.fold (+) ""
+                
