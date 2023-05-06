@@ -762,7 +762,7 @@ module CalcParser =
                 List.fold(fun (inAcc, outAcc) (opFunc, lhsQ, rhsQ) -> 
                     let (lhsVal: option<'T>, inputs': list<'T>,  outputs': list<'T>) = getValue(lhsQ, inAcc, outAcc)
                     let (rhsVal: option<'T>, inputs'': list<'T>,  outputs'': list<'T>) = getValue(rhsQ, inputs', outputs')
-                    match (lhsVal,rhsVal) with 
+                    match (lhsVal, rhsVal) with 
                     | (Some lhs, Some rhs) ->
                         let t:'T = opFunc(lhs, rhs)
                         (inputs'', t :: outputs'')
@@ -805,8 +805,7 @@ module CalcParser =
                     (Modulo, modulo)
                 ] 
                 |> Map.ofList
-                
-            
+                            
             let inputs, operators = processCalcTree(binOp, [], [], opMap)
             
             printfn "%A" inputs
