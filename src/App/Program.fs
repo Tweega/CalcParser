@@ -11,14 +11,14 @@ open Parser.CalcParser
 // let expr = "5 * ((1 + 2) * (3 + 4))"
 let expr1 = "1 - 2 - 3 * 4" // this gives me unecessary rhs parentheses 1 - 2 - {3 * 4}
 let expr2 = "(1 - 2) - 3 - 4" // this gives me unecessary rhs parentheses 1 - 2 - {3 * 4}
-let expr = "'Sinusoid' + 'cdt158' / 'SinusoidU'"
+let expr = "3 + 'cdt158' / 'SinusoidU'"
 
-let jollyNested = Parser.CalcParser.testParseExpression(expr)
+// let jollyNested = Parser.CalcParser.testParseExpression(expr)
 // let ans = jollyNested([1;2;3;4;5])
 // printfn "%f" ans
 
 match parseExpression(expr) with 
-| Ok( t, dt)  -> 
+| Ok( t, _dt)  -> 
     let hh = Parser.CalcParser.expressionFromTerm(t)
     printfn "%s" hh
 | Error e ->

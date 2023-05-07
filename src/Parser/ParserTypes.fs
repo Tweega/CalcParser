@@ -26,22 +26,20 @@ module ParserTypes =
     | GreaterThanOrEquals
 
     type BinaryOperator = 
-    | Operator of ArithmeticSymbol * Precedence
+    | Operator of ArithmeticOp * Precedence
     | Comparator of ComparatorSymbol
     with 
         member this.OpToString() = 
             match this with 
             | Operator (aSym, _prec) ->
                 match aSym with 
-                | ArithmeticSymbol (sym, _) ->
-                    match sym with 
-                    | Plus -> " + "
-                    | Minus -> " - "
-                    | Multiply -> " * "
-                    | Divide -> " / "
-                    | NoOp -> " NoOp "
-                    | Power -> " ^ "
-                    | Modulo -> " % "
+                | Plus -> " + "
+                | Minus -> " - "
+                | Multiply -> " * "
+                | Divide -> " / "
+                | NoOp -> " NoOp "
+                | Power -> " ^ "
+                | Modulo -> " % "
             | Comparator cSym -> 
                 match cSym with 
                 | Equals -> " = "
@@ -90,13 +88,13 @@ module ParserTypes =
     | Input
     | Output
 
-    let noOp = Operator (ArithmeticSymbol (NoOp, true), 0)
-    let opPlus = Operator (ArithmeticSymbol (Plus, true), 1)
-    let opMinus = Operator (ArithmeticSymbol (Minus, false), 1)
-    let opModulo = Operator (ArithmeticSymbol (Modulo, false), 1) 
-    let opMultiply = Operator (ArithmeticSymbol (Multiply, true), 2)
-    let opDivide = Operator (ArithmeticSymbol (Divide, false), 2)
-    let opPower = Operator (ArithmeticSymbol (Power, false), 3)
+    let noOp = Operator (NoOp, 0)
+    let opPlus = Operator (Plus, 1)
+    let opMinus = Operator (Minus, 1)
+    let opModulo = Operator (Modulo, 1) 
+    let opMultiply = Operator (Multiply, 2)
+    let opDivide = Operator (Divide, 2)
+    let opPower = Operator (Power, 3)
 
 
     type OpFunc<'T> = ('T * 'T -> 'T) 
@@ -109,12 +107,11 @@ module ParserTypes =
         type Unary = 
             | Unary of BinaryOperator
             static member Combine(unaryA: Unary, unaryB: Unary) = 
-                let g = opPlus
                 match (unaryA, unaryB) with
-                | Unary (Operator (ArithmeticSymbol (Plus, _), _)), Unary (Operator (ArithmeticSymbol (Plus, _),_)) -> Ok (Unary opPlus)
-                | Unary (Operator (ArithmeticSymbol (Minus, _), _)), Unary (Operator (ArithmeticSymbol (Minus, _), _)) -> Ok (Unary opPlus)
-                | Unary (Operator (ArithmeticSymbol (Plus, _), _)), Unary (Operator (ArithmeticSymbol (Minus, _), _)) -> Ok (Unary opMinus)
-                | Unary (Operator (ArithmeticSymbol (Minus, _), _)), Unary (Operator (ArithmeticSymbol (Plus, _), _)) -> Ok (Unary opMinus)
+                | Unary (Operator (Plus, _)), Unary (Operator (Plus, _)) -> Ok (Unary opPlus)
+                | Unary (Operator (Minus, _)), Unary (Operator (Minus, _)) -> Ok (Unary opPlus)
+                | Unary (Operator (Plus, _)), Unary (Operator (Minus, _)) -> Ok (Unary opMinus)
+                | Unary (Operator (Minus, _)), Unary (Operator (Plus, _)) -> Ok (Unary opMinus)
                 | _ -> Error "Only Plus and Minus accepted as unary operators"
     
     [<RequireQualifiedAccessAttribute>]

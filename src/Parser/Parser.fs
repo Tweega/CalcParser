@@ -10,10 +10,7 @@ module CalcParser =
     | Float of IntegralPart * FractionPart
     | String of string
 
-    let quot = '\u0022'
-
-    
-    
+    let quot = '\u0022'    
     
     let composeParsers(f1: string -> Result<Option<TypedTerm> * string, string>) (f2: string -> Result<option<TypedTerm> * string, string>) =
         // composeParsers strings parsers together but is equivalent to oneOf in that it returns after the first successful parse
@@ -214,16 +211,13 @@ module CalcParser =
                     ParseOK (None, s)
                 | false -> processString(t, bracketCount, c :: acc)
             
-
         match parseWhitespace(s) with 
         | ParseOK (_, remaining) ->
-            printfn "Processing %s" remaining            
+            printfn "Processing %s" remaining
             let letters = remaining |> Seq.toList
             processString(letters, 0, [])
         | ParseError msg -> ParseError msg
 
-
-    
 
     let parseOperator(s:string) =
         let reOp = @"^([+-\/\*\^%])"
@@ -461,11 +455,11 @@ module CalcParser =
                                 | Error msg -> Error msg
                             | Value v ->
                                 match unary with 
-                                | Unary (Operator (ArithmeticSymbol (Plus, _), _)) ->
+                                | Unary (Operator (Plus, _)) ->
                                     // add the value as is to values list
                                     let values' = (v, dt) :: values
                                     gatherTerms(remaining', values', binOps, Expecting.BinOp)
-                                | Unary (Operator (ArithmeticSymbol (Minus, _), _)) ->
+                                | Unary (Operator (Minus, _)) ->
                                     // multiply value by -1 if it is a constant number 
                                     // check  that dt is Numeric otherwose error
                                     match v with 
@@ -507,7 +501,7 @@ module CalcParser =
                     Error msg
 
         let result = gatherTerms(expr, [], [], Expecting.Val (Unary opPlus))
-        printfn "%A" result
+        // printfn "%A" result
 
 
         match result with 
@@ -515,7 +509,7 @@ module CalcParser =
             // the initial term should be a value
             // now process the lists into a calc tree
             let astRes = buildAST(binaryOps, typedValues)
-            // printfn "%A" astRes
+            printfn "%A" astRes
             astRes
 
         | Error msg ->
@@ -815,7 +809,6 @@ module CalcParser =
                 infinity
 
     let rec expressionFromTerm(term: Term) = 
-        // we need to know if operators are associative or not (a - b) - c != a - (b - c)
         let valueToString(v: Value) = 
             match v with 
             | Tag tag -> sprintf @"'%s'" tag
@@ -841,10 +834,10 @@ module CalcParser =
                 s :: acc
                 
             | BinaryOp bOp ->
-                let thisPrec, thisAssoc = 
+                let thisPrec = 
                     match bOp.Operator with 
-                    | Operator (ArithmeticSymbol(_sym, isAssoc) , prec) -> prec, isAssoc
-                    | Comparator _comparator ->(0, false) //grouping always matters with a comparator
+                    | Operator (_sym, prec) -> prec
+                    | Comparator _comparator ->0 //grouping always matters with a comparator
                 
                 let acc2 = 
                     match parentPrecedence > thisPrec with 
@@ -875,12 +868,7 @@ module CalcParser =
                             let  s = valueToString(v)
                             s :: accOp
 
-                        | BinaryOp rhsOp -> 
-                                    
-                            let precedence = 
-                                match thisAssoc with 
-                                | true -> thisPrec
-                                | false -> 99 //force rhs to wrap itself in parentheses
+                        | BinaryOp rhsOp ->                                     
                             dodah(accOp, BinaryOp rhsOp, thisPrec)
                             
                     | None -> "Error no RHS term" :: acc // this would be an error - we should return a result
