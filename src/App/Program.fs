@@ -20,12 +20,14 @@ let expr3 = "3 + 'cdt158' / 'SinusoidU'"
 // let ans = jollyNested([1;2;3;4;5])
 // printfn "%f" ans
 
-let s = "tagTot('CDT158') + tagAvg('Sinusoid', " + quote("*-1d") + ", " + quote("*") + ")"
+// let s = "tagTot('CDT158') + tagAvg('Sinusoid', " + quote("*-1d") + ", " + quote("*") + ")"
+let s = "'CDT158' / 'Sinusoid' * 100"
 let yy = Parser.CalcParser.parseExpression(s)
 
-match parseExpression(expr) with 
+match parseExpression(s) with 
 | Ok( t, _dt)  -> 
-    let hh = Parser.CalcParser.expressionFromTerm(t)
+    // let hh = Parser.CalcParser.expressionFromTerm(t)
+    let hh = Parser.CalcParser.AFAnalysisFromTerm(t)
     printfn "%s" hh
 | Error e ->
     printfn "%s" e

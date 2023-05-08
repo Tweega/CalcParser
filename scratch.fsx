@@ -30,8 +30,13 @@ let superNested = Parser.CalcParser.testParseExpression("(105 / (5 * ((1 + 2) * 
 superNested([1;2;3;4;5;105])
 
 let s = "tagTot('CDT158') + tagAvg('Sinusoid', " + quote("*-1d") + ", " + quote("*") + ")"
-Parser.CalcParser.parseExpression(s)
-
+let res = Parser.CalcParser.parseExpression(s)
+match res with 
+| Ok (t, _dt) -> 
+  let expr = Parser.CalcParser.expressionFromTerm(t)
+  printfn "%s" expr
+| Error err -> 
+  printfn "%s" err
   //> let expr = Parser.CalcParser.parseExpression("1 + 2")
 
   // Parser.CalcParser.createCalcDef(expr)

@@ -71,9 +71,9 @@ module ParserTypes =
     // brackets, mult div,  plus, minus
 
     and Value = // values are indivisible and evaluate to a base type such as int
-    | Tag of string // for the moment assume that tag type is always float
-    | Constant of Constant
-    | Path of string
+    | Tag of string // for the moment assume that tag type is always float  - this could  also be a path - essentially this is either tag or pipoint data reference
+    | Constant of Constant // we could have an option of path here
+    | Path of string //we also need to capture if this is a pipoint or not
     | BinaryOpValue of BinaryOp // for bracketed expressions
     | Function of string * list<TypedTerm> // labelled bracketed expression
 

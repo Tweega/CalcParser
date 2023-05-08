@@ -883,87 +883,153 @@ module CalcParser =
         |> List.rev
         |> List.fold (+) ""
                 
+    let quote(s:string) =
+        let sQuote = (string) quot
+        (string) sQuote + s + sQuote
+
+    
+    let writeStrings(filePath: string) (strings: list<string>) =
+
+        use file = System.IO.File.CreateText(filePath)
+        strings |>
+        List.iter (fun str ->
+            file.WriteLine(str)
+        )
 
 
-    let rec AFAnalysisFromTerm(term: Term) = 
+    let rec AFAnalysisFromTerm(term: Term): string = 
+
         // list validated variables, if any
 
         // walk the tree identifying tag inputs - note that this may include attributes also that are PI Point data references
         // an attribute may be a constant as well as a pi tag  - so we would need to signal that in the equation
         // 'sinusoid' +  @'thresholdConstant' 
-        let identifyTags
-        // output expression, using validated variable names, if any
-        let valueToString(v: Value) = 
-            match v with 
-            | Tag tag -> sprintf @"'%s'" tag
-            | Constant c -> 
-                match c with 
-                | StringConst strConst -> strConst
-                | NumericalConst numConst -> (string) numConst
-
-            | Path path -> path
-            | BinaryOpValue binOp -> 
-                //  would not expect to come here when serialising an expression tree but add brackets for  now which is how binary op values are created
-                printfn "We have a BinaryOpValue in expressionFromTerm - which is unexpected"
-                expressionFromTerm(BinaryOp binOp)
-                |> fun s -> "(" + s + ")" 
-
-            | Function (fName, _) -> sprintf "Function: %s" fName
-        
-        // let b: BinaryOp = 9
-        let rec serialiseTerm(acc: list<string>, t: Term, parentPrecedence: Precedence) : list<string>= 
+    
+        let rec identifyTags(t: Term, isDivisor: bool, tags: list<string * bool>) =
+            // recurse  tree pulling out tags
             match t with 
-            | Value v -> 
-                let  s = valueToString(v)
+            | Value  v ->
+                match v with 
+                | Tag tag  -> (tag, isDivisor) :: tags // for the moment assume that tag type is always float  - this could  also be a path - essentially this is either tag or pipoint data reference
+                | BinaryOpValue bop -> 
+                    identifyTags (BinaryOp bop, false, tags)   // recast as BinaryOp and loop again
+                | _ -> tags
+
+            | BinaryOp bop -> 
+                let tags' = 
+                    match bop.LHS with 
+                    | Some (lhs, _) -> identifyTags(lhs, false, tags)
+                    | None -> tags
+                
+                match bop.RHS with 
+                | Some (rhs, _) -> 
+                    
+                    let isDivisor' = 
+                        match bop.Operator with
+                        | Operator (aSym, _prec) ->
+                            match aSym with 
+                            | Divide -> true
+                            | _ -> false
+                        | _ -> false
+
+                    identifyTags(rhs, isDivisor', tags')
+                | None -> tags'
+    
+        let getTags(t:Term) =
+            identifyTags(t, false, [])
+    
+    
+        let tags =       
+            getTags(term)
+
+        let jj =
+            tags
+            |> List.fold(fun acc (t, _d) ->
+                let qq = [
+                    sprintf "Var%s := " t;
+                    sprintf "\tIf Yearday('t-180m') &lt;&gt; Yearday(PrevEvent('%s', 't')) Then" t;
+                    sprintf "\t\tDigState(%s%s" (quote("Calc Failed")) ")";
+                    "\tElse";
+                    sprintf "\t\tIf BadVal(PrevVal('%s', 't')) Then" t
+                    sprintf "\t\tDigState(%s%s" (quote("Calc Failed")) ")";
+                    "\tElse";
+                    sprintf "\t\tIf BadVal(PrevVal('%s', 't')) Then" t; 
+                    sprintf "\t\t\tDigState(%s%s" (quote("Calc Failed")) ")";
+                    sprintf "\t\tElse PrevVal(%s, 't')" t; 
+                ]
+                let s = qq |> String.concat "\r "
                 s :: acc
-                
-            | BinaryOp bOp ->
-                let thisPrec = 
-                    match bOp.Operator with 
-                    | Operator (_sym, prec) -> prec
-                    | Comparator _comparator ->0 //grouping always matters with a comparator
-                
-                let acc2 = 
-                    match parentPrecedence > thisPrec with 
-                    | true -> "{" :: acc // we may never get here as any input in brackets becomes an opValue
-                    | false -> acc 
-                
-                let accLHS = 
-                    match bOp.LHS with 
-                    | Some (lhsTerm,  _lhsDT) -> 
-                        match lhsTerm with 
-                        | Value v ->  
-                            let  s = valueToString(v)
-                            s :: acc2
+            ) []
 
-                        | BinaryOp lhsOp -> 
-                            serialiseTerm(acc2, BinaryOp lhsOp, thisPrec)
 
-                    | None -> "Error no LHS term" :: acc2 // this would be an error - we should return a result
+        let divisors =
+            tags
+            |>List.filter(fun (_t, isDivisor) ->
+                isDivisor
+            )
 
-                let accOp = bOp.Operator.OpToString() :: accLHS
 
-                let accRHS= 
-                    match bOp.RHS with 
-                    | Some (rhsTerm,  _rhsDT) -> 
-                
-                        match rhsTerm with 
-                        | Value v ->  
-                            let  s = valueToString(v)
-                            s :: accOp
+        let hasDivisors, divisorStr = 
+            match divisors with 
+            | [] -> false,""
+            | _-> 
+                let s =
+                    divisors
+                    |> List.map(fun (t, _d) -> 
+                        sprintf "'%s' = 0 " t
+                    )
+                    |> String.concat " Or "
+                true, s
 
-                        | BinaryOp rhsOp ->                                     
-                            serialiseTerm(accOp, BinaryOp rhsOp, thisPrec)
-                            
-                    | None -> "Error no RHS term" :: acc // this would be an error - we should return a result
-                        
+        
+        let badVals = 
+            tags |> 
+            List.map(fun (t, _d) -> 
+                sprintf "BadVal('%s')" t
+            )
+            |> String.concat " Or "
+        
+        
+        let validValues =
+            [
+                "VarValidValues := ";
+                sprintf "\tIf %s Then" badVals;
+                sprintf "\t\t0";
+                "\tElse";
+                sprintf "\t\t1";
+            ]
+
+        let calcStr =expressionFromTerm(term)
+        let calc = 
+            [
+                yield "VarCalc := ";
+                yield "\tIf VarValidValues = 1 Then"; 
+                match hasDivisors with 
+                | true ->   
+                    let uu = sprintf "\t\tIf %s Then 0" divisorStr                 
+                    yield uu
+                    yield "\t\tElse"
+                    yield sprintf "\t\t\t%s" calcStr
+                | false -> 
+                    yield sprintf "\t%s" calcStr
+
+                yield sprintf "\tElse DigState(%s%s" (quote("Calc Failed")) ")";
             
-                match parentPrecedence > thisPrec with 
-                | true -> "}" :: accRHS
-                | false -> accRHS
+            ]
+        let clamp = 
+            [
+                "VariableResult := ";
+                sprintf "\tIf BadVal(VariableCalc) Then DigState(%s)" (quote("Calc Failed"));
+                "\tElse";
+                sprintf "\t\tIf VariableCalc &gt; 'Total|Hi' Then DigState(%s) " (quote("Calc Failed"));
+                "\t\tElse";
+                "\t\t\tIf VariableCalc &lt; 'Total|Lo' Then 'Total|Lo' ";
+                "\t\t\tElse VariableCalc";
+            ]
+            
+        let yy = jj @ validValues @ calc @ clamp
+
+        writeStrings "afAnalysis.txt" yy
+        yy |> String.concat "\r"
 
                 
-        serialiseTerm([], term, -1)
-        |> List.rev
-        |> List.fold (+) ""
-             
