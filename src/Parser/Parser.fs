@@ -113,7 +113,7 @@ module CalcParser =
                         let msg = sprintf "Illegal character (%s)in tag name: %s" x s
                         ParseError msg
                     | _ ->
-                        let reNonPrintable = @"[-~]"
+                        let reNonPrintable = @"[^ -~]"
                         match reApply(reNonPrintable, tag) with 
                         | Ok (Some _), _s -> 
                             let msg = sprintf "Non printable character in tag name: %s" s
@@ -134,7 +134,7 @@ module CalcParser =
             | None -> ParseOK (None, s)
 
             | Some str ->
-                let reNonPrintable = @"[-~]"
+                let reNonPrintable = @"[^ -~]"
                 match reApply(reNonPrintable, str) with 
                 | Ok (Some _), _s -> 
                     let msg = sprintf "Non printable character in string: %s" s
@@ -164,10 +164,10 @@ module CalcParser =
             | None ->ParseOK (None, s)
 
             | Some str ->
-                let reNonPrintable = @"[-~]"
+                let reNonPrintable = @"[^ -~]"
                 match reApply(reNonPrintable, str) with 
                 | Ok (Some _), _s -> 
-                    let msg = sprintf "Non printable character in string: %s" s
+                    let msg = sprintf "Non printable character in function  name: %s" s
                     ParseError msg
                 | _ ->
                     printfn "Do we get here: %s, %s" str remaining
@@ -827,7 +827,7 @@ module CalcParser =
             | Function (fName, _) -> sprintf "Function: %s" fName
         
         // let b: BinaryOp = 9
-        let rec dodah(acc: list<string>, t: Term, parentPrecedence: Precedence) : list<string>= 
+        let rec serialiseTerm(acc: list<string>, t: Term, parentPrecedence: Precedence) : list<string>= 
             match t with 
             | Value v -> 
                 let  s = valueToString(v)
@@ -853,7 +853,7 @@ module CalcParser =
                             s :: acc2
 
                         | BinaryOp lhsOp -> 
-                            dodah(acc2, BinaryOp lhsOp, thisPrec)
+                            serialiseTerm(acc2, BinaryOp lhsOp, thisPrec)
 
                     | None -> "Error no LHS term" :: acc2 // this would be an error - we should return a result
 
@@ -869,7 +869,7 @@ module CalcParser =
                             s :: accOp
 
                         | BinaryOp rhsOp ->                                     
-                            dodah(accOp, BinaryOp rhsOp, thisPrec)
+                            serialiseTerm(accOp, BinaryOp rhsOp, thisPrec)
                             
                     | None -> "Error no RHS term" :: acc // this would be an error - we should return a result
                         
@@ -879,7 +879,91 @@ module CalcParser =
                 | false -> accRHS
 
                 
-        dodah([], term, -1)
+        serialiseTerm([], term, -1)
         |> List.rev
         |> List.fold (+) ""
                 
+
+
+    let rec AFAnalysisFromTerm(term: Term) = 
+        // list validated variables, if any
+
+        // walk the tree identifying tag inputs - note that this may include attributes also that are PI Point data references
+        // an attribute may be a constant as well as a pi tag  - so we would need to signal that in the equation
+        // 'sinusoid' +  @'thresholdConstant' 
+        let identifyTags
+        // output expression, using validated variable names, if any
+        let valueToString(v: Value) = 
+            match v with 
+            | Tag tag -> sprintf @"'%s'" tag
+            | Constant c -> 
+                match c with 
+                | StringConst strConst -> strConst
+                | NumericalConst numConst -> (string) numConst
+
+            | Path path -> path
+            | BinaryOpValue binOp -> 
+                //  would not expect to come here when serialising an expression tree but add brackets for  now which is how binary op values are created
+                printfn "We have a BinaryOpValue in expressionFromTerm - which is unexpected"
+                expressionFromTerm(BinaryOp binOp)
+                |> fun s -> "(" + s + ")" 
+
+            | Function (fName, _) -> sprintf "Function: %s" fName
+        
+        // let b: BinaryOp = 9
+        let rec serialiseTerm(acc: list<string>, t: Term, parentPrecedence: Precedence) : list<string>= 
+            match t with 
+            | Value v -> 
+                let  s = valueToString(v)
+                s :: acc
+                
+            | BinaryOp bOp ->
+                let thisPrec = 
+                    match bOp.Operator with 
+                    | Operator (_sym, prec) -> prec
+                    | Comparator _comparator ->0 //grouping always matters with a comparator
+                
+                let acc2 = 
+                    match parentPrecedence > thisPrec with 
+                    | true -> "{" :: acc // we may never get here as any input in brackets becomes an opValue
+                    | false -> acc 
+                
+                let accLHS = 
+                    match bOp.LHS with 
+                    | Some (lhsTerm,  _lhsDT) -> 
+                        match lhsTerm with 
+                        | Value v ->  
+                            let  s = valueToString(v)
+                            s :: acc2
+
+                        | BinaryOp lhsOp -> 
+                            serialiseTerm(acc2, BinaryOp lhsOp, thisPrec)
+
+                    | None -> "Error no LHS term" :: acc2 // this would be an error - we should return a result
+
+                let accOp = bOp.Operator.OpToString() :: accLHS
+
+                let accRHS= 
+                    match bOp.RHS with 
+                    | Some (rhsTerm,  _rhsDT) -> 
+                
+                        match rhsTerm with 
+                        | Value v ->  
+                            let  s = valueToString(v)
+                            s :: accOp
+
+                        | BinaryOp rhsOp ->                                     
+                            serialiseTerm(accOp, BinaryOp rhsOp, thisPrec)
+                            
+                    | None -> "Error no RHS term" :: acc // this would be an error - we should return a result
+                        
+            
+                match parentPrecedence > thisPrec with 
+                | true -> "}" :: accRHS
+                | false -> accRHS
+
+                
+        serialiseTerm([], term, -1)
+        |> List.rev
+        |> List.fold (+) ""
+             
