@@ -8,6 +8,8 @@
   <ItemGroup>
     <Compile Include="ParserTypes.fs" />
     <Compile Include="Parser.fs" />
+    <!-- <Compile Include="scratch.fsx" /> -->
+    <Compile Include="JutzParser.fs" />
   </ItemGroup>
 
 </Project>
