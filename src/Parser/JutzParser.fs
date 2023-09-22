@@ -1,6 +1,7 @@
+﻿namespace Parser
 
-    #r @".\bin\Debug\net6.0\Parser.dll"
-    open Parser.ParserTypes
+module JutzParser =
+    open ParserTypes
     open System.Text.RegularExpressions
 
     let (|Exists|_|) = Map.tryFind
@@ -16,6 +17,7 @@
         match expected = value with 
         | true -> Some ()
         | _ -> None 
+
 
     [<RequireQualifiedAccessAttribute>]
     type DataType =
@@ -148,7 +150,7 @@
     let reApply(re: string, s: string) =
         // s is a string to be parsed and it is expected that this operation will match some or none characters from the front
         // either as a direct match or as a single group in which case some marker characters, such as brackets will be thrown away
-        printfn "reApply has received [%s:%s]" s re
+        printfn "reApply has received [%s]" s
         let rx = Regex(re, RegexOptions.IgnoreCase + RegexOptions.Multiline +  RegexOptions.Compiled)
         let m = rx.Match(s)
 
@@ -158,9 +160,7 @@
                 match m.Captures.Count with
                 | 1 ->  // working here on whitespace issue.  we may need to match on whitespace separately
                     printfn "We have a match: %A %d" m.Captures[0].Value m.Length
-                    printfn "We have a match: %A %d" m.Groups[0].Value m.Groups.Count
-                    printfn "We have a match: %A %d" m.Groups[1].Value m.Groups.Count
-                    (Ok (Some m.Groups[1].Value), s[m.Groups[1].Value.Length ..])
+                    (Ok (Some m.Groups[1].Value), s[m.Length ..])
                 | _ -> 
                     let msg = sprintf "More than one group matched in reg exp: %s on string: %s" re s
                     (Error msg), s
@@ -168,7 +168,7 @@
             matchResult, newS    
 
         | false -> 
-            printfn "no match: %s :%s " re s
+            // printfn "no match: %s :%s " re s
             Ok None, s
 
     let parseWhitespace(s: string)  =
@@ -280,8 +280,7 @@
 
 
     let parseFunctionName(s:string) =
-    //^\((.+)\)
-        let reString: string = sprintf @"^([A-Za-z0-9]+)\s*\(" //function name starts with alpha optionally continues with alphaNum and terminates with open parenthesis
+        let reString: string = sprintf @"^([A-Za-z][A-Za-z0-9]*)\s*\(" //function name starts with alpha optionally continues with alphaNum and terminates with open parenthesis
         let newValueResult, remaining = reApplyX(reString, s)
         match newValueResult with 
         | Ok maybeFuncName -> 
@@ -289,26 +288,19 @@
             match maybeFuncName with 
             | None ->ParseOK (None, s)
 
-            | Some _str ->
-                ParseOK (maybeFuncName, remaining)
+            | Some str ->
+                let reNonPrintable = @"[^ -~]"
+                match reApply(reNonPrintable, str) with 
+                | Ok (Some _), _s -> 
+                    let msg = sprintf "Non printable character in function  name: %s" s
+                    ParseError msg
+                | _ ->
+                    printfn "Do we get here: %s, %s" str remaining
+                    let remaining' = "(" + remaining //reApply swallows the opening bracket so replace it here
+                    ParseOK (maybeFuncName, remaining')
                     
         | Error msg -> ParseError msg
-
-    let parseFunctionContents(s:string) =
-    //^\((.+)\)
-        let reString: string = sprintf @"^\((.+)\)"
-        let newValueResult, remaining = reApplyX(reString, s)
-        match newValueResult with 
-        | Ok maybeFuncName -> 
-        
-            match maybeFuncName with 
-            | None ->ParseOK (None, s)
-
-            | Some _str ->
-                ParseOK (maybeFuncName, remaining[1 .. remaining.Length -  2]) //strip off the brackets from the where clause
-                    
-        | Error msg -> ParseError msg
-
+    
     let parseElementSelection(s:string) =
         let reElement: string = sprintf @"^([A-Za-z0-9]+)"
         
@@ -325,7 +317,7 @@
         | Error msg -> ParseError msg
 
     let parseAttributeSelection(s:string) =
-        let reAttribute: string = sprintf @"^(@[A-Za-z0-9]+)"
+        let reAttribute: string = sprintf @"^@([A-Za-z0-9]+)"
         
         let newValueResult, remaining = reApplyX(reAttribute, s)
         match newValueResult with 
@@ -335,30 +327,31 @@
             | None -> ParseOK (None, s)
 
             | Some str ->
-                let attrName = str[1..]
-                ParseOK (Some attrName, remaining)
+                ParseOK (maybeNodeSelection, remaining)
                     
         | Error msg -> ParseError msg
 
     
     let parseWhere(s:string) =
-        let reWhere: string = sprintf @"^\[(.+)]"
+        let reAxis: string = sprintf @"^([A-Za-z0-9]+)"
+        // let reAxis: string = sprintf @"^([A-Za-z0-9]+?\/+)."  //excludes trailing slashes
         
-        let newValueResult, remaining = reApplyX(reWhere, s)
+        let newValueResult, remaining = reApplyX(reAxis, s)
         match newValueResult with 
-        | Ok maybeWhere -> 
+        | Ok maybeNodeSelection -> 
         
-            match maybeWhere with 
+            match maybeNodeSelection with 
             | None -> ParseOK (None, s)
 
-            | Some _str ->
-                ParseOK (maybeWhere, remaining[1 .. remaining.Length -  2]) //strip off the brackets from the where clause
+            | Some str ->
+                ParseOK (maybeNodeSelection, remaining)
                     
         | Error msg -> ParseError msg
 
         
     let parseAxis(s:string) =
-        let reAxis: string = sprintf @"^([A-Za-z0-9\.]*\/+)."  //includes trailing slashes
+        let reAxis: string = sprintf @"^([A-Za-z0-9]+?\/+)."  //includes trailing slashes
+        // let reAxis: string = sprintf @"^([A-Za-z0-9]+?\/+)."  //excludes trailing slashes
         
         let newValueResult, remaining = reApplyX(reAxis, s)
         match newValueResult with 
@@ -464,10 +457,8 @@
             | None -> Ok (None, input)  //no error but we don't have an axis
             | Some str -> 
                 let firstSlashPos = str.IndexOf('/')
-                let n = str.Length - firstSlashPos - 1
-                printfn "n is %d, firstSlashPos is %d strLen is %d" n firstSlashPos str.Length
-                let axisStr = str[0..firstSlashPos - 1]
-                printfn "Axis string is %s" axisStr
+                let n = input.Length - firstSlashPos - 1
+                let axisStr = input[0..n]
                 let axis = getAxis(axisStr)
                 match axis with
                 | Some axis -> 
@@ -480,16 +471,12 @@
                     | Eq 1 ->
                         // double slash following an axis - this is 2 axes, such as parent//, the one identified plus all descendants
                         // in this case we also need to return a selection of Any
-                        let termC = (JPTerm.Axis Axis.Descendant)
-                        match axis with 
-                        | Axis.Global ->
-                            Ok (Some [termA], remaining)
-                        | _ ->
-
-                            let termB = (JPTerm.NodeName NodeName.Any)
-                            Ok (Some [termC; termB; termA], remaining) // return terms in reverse order so they can easily be appeded to JPTerm list
+                            
+                        let termB = (JPTerm.Axis Axis.Descendant)
+                        let termC = (JPTerm.NodeName NodeName.Any)
+                        Ok (Some [termC; termB; termA], remaining) // return terms in reverse order so they can easily be appeded to JPTerm list
                         
-                    | _ -> Error (sprintf "Too many slashes in axes: %s" input)
+                    | _ -> Error (sprintf "Too many slashesin axes: %s" input)
 
                 | _ ->
                     Error  (sprintf "Error: Unrecognised axis: %s" axisStr )
@@ -514,46 +501,6 @@
                 Ok (Some [JPTerm.NodeSelection {Name = nodeName; Type = nodeType}], remaining)
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
-
-    let parseAndHandleFunctionName(input: string) : Result<option<list<JPTerm>>* string, string> =
-        let (res, remaining) =
-            match parseFunctionName(input) with
-            | ParseOK (None, _s) -> 
-                 (Ok None, input)
-            | ParseOK (Some x, s) -> 
-                Ok (Some x), s
-
-            | ParseError msg -> (Error msg, input)
-
-        match res with
-        | Ok maybeMatch -> 
-            match maybeMatch with 
-            | Some (functionName) ->
-                Ok (Some [JPTerm.NodeName (NodeName.NodeName functionName)], remaining)
-                // here we need to process the contents of the function and wrap that in a JPTerm ... or something
-            | None -> Ok (None, remaining)
-        | Error msg -> Error msg
-
-        
-    let parseAndHandleFunctionContents(input: string) : Result<option<list<JPTerm>>* string, string> =
-        let (res, remaining) =
-            match parseFunctionContents(input) with
-            | ParseOK (None, _s) -> 
-                 (Ok None, input)
-            | ParseOK (Some x, s) -> 
-                Ok (Some x), s
-
-            | ParseError msg -> (Error msg, input)
-
-        match res with
-        | Ok maybeMatch -> 
-            match maybeMatch with 
-            | Some (functionName) ->
-                Ok (Some [JPTerm.NodeName (NodeName.NodeName functionName)], remaining)
-                // here we need to process the contents of the function and wrap that in a JPTerm ... or something
-            | None -> Ok (None, remaining)
-        | Error msg -> Error msg
-
 
     let parseAndHandleXSLFunction(input: string) : Result<option<list<JPTerm>>* string, string> =
         let (res, remaining) =
@@ -598,68 +545,7 @@
         | Error msg -> Error msg
 
 
-    let parseAndHandleWhere(input: string) : Result<option<list<JPTerm>>* string, string> =
-        
-        let (res, remaining) =
-            match parseWhere(input) with
-            | ParseOK (None, _s) -> 
-                 (Ok None, input)
-            | ParseOK (Some x, s) -> 
-                // at this point we have to gather terms for str and wrap that up in a JPTerm.Filter
-                // for the moment return a nodename set to this string to parse
-                Ok (Some x), s
 
-            | ParseError msg -> (Error msg, input)
-
-        match res with
-        | Ok maybeMatch -> 
-            match maybeMatch with 
-            | Some (whereClause) ->                                
-                Ok (Some [JPTerm.NodeName (NodeName.NodeName whereClause)], remaining)
-            | None -> Ok (None, remaining)
-        | Error msg -> Error msg
-
-    
-
-    let parseAndHandleElementSelection(input: string) : Result<option<list<JPTerm>>* string, string> =
-        
-        let (res, remaining) =
-            match parseElementSelection(input) with
-            | ParseOK (None, _s) -> 
-                 (Ok None, input)
-            | ParseOK (Some x, s) -> (Ok (Some(x, NodeType.Element) ), s)
-
-            | ParseError msg -> (Error msg, input)
-
-        match res with
-        | Ok maybeMatch -> 
-            match maybeMatch with 
-            | Some (nodeName, nodeType) ->                                
-                Ok (Some [JPTerm.NodeSelection {Name = nodeName; Type = nodeType}], remaining)
-            | None -> Ok (None, remaining)
-        | Error msg -> Error msg
-
-    
-
-    let parseAndHandleAttributeSelection(input: string) : Result<option<list<JPTerm>>* string, string> =
-        
-        let (res, remaining) =
-            match parseAttributeSelection(input) with
-            | ParseOK (None, _s) -> 
-                 (Ok None, input)
-            | ParseOK (Some x, s) -> (Ok (Some(x, NodeType.Attribute) ), s)
-
-            | ParseError msg -> (Error msg, input)
-
-        match res with
-        | Ok maybeMatch -> 
-            match maybeMatch with 
-            | Some (nodeName, nodeType) ->                                
-                Ok (Some [JPTerm.NodeSelection {Name = nodeName; Type = nodeType}], remaining)
-            | None -> Ok (None, remaining)
-        | Error msg -> Error msg
-
-    
 //---------
 //  type ConstantValue = {
 //         DataType:DataType;
@@ -774,23 +660,18 @@
     let rec parseExpression(expr: string) =
         // let rootOp = makeRootOp()
         // let opStack: Stack<BinaryOp> = Stack []
-        // let rootStack = Stack.push rootOp opStacks
+        // let rootStack = Stack.push rootOp opStack
 
-        // let parseResult = parseAndHandleAxes(expr)
-        // let parseResult = parseAndHandleElementSelection(expr)
-        // let parseResult = parseAndHandleAttributeSelection(expr)
-        // let parseResult = parseAndHandleWhere(expr)
-        // let parseResult = parseAndHandleFunctionName(expr)
-        let parseResult = parseAndHandleFunctionContents(expr)
-        printfn "%A" parseResult
+        let parseAxis = parseAndHandleAxes(expr)
 
         let rec gatherTerms(input: string, values: list<Value * DataType>, binOps: list<BinaryOp>, expecting: Expecting) : Result<list<Value * DataType> * list<BinaryOp>, string> =    
             // this function does an initial pass through the expression, creating a list of terms
             Error "tbd"
         ()
+
     
     let testParseExpression(expr:string) = 
         let exprRes = parseExpression(expr) // these values are just placeholders though they are returned from processCalcTree
         printfn "%A" exprRes
 
-    testParseExpression("(zz aa az)")
+    testParseExpression(".//plant")
