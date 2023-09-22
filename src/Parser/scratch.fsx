@@ -372,6 +372,21 @@
                     
         | Error msg -> ParseError msg
     
+    let parseAxisLong(s:string) =
+        let reAxis: string = sprintf @"^([A-Za-z0-9]+)::"  //includes trailing slashes
+        
+        let newValueResult, remaining = reApplyX(reAxis, s)
+        match newValueResult with 
+        | Ok maybeAxis -> 
+        
+            match maybeAxis with 
+            | None -> ParseOK (None, s)
+
+            | Some _str ->
+                ParseOK (maybeAxis, remaining[2..])//skip the :: characters 
+                    
+        | Error msg -> ParseError msg
+    
         
     let parseBrackets(bracketChars: char * char)(s:string) =
         // we could replace all the reg exps with character parsing except that would probably look  more like the voice analyser
@@ -446,6 +461,8 @@
         | "." -> Some Axis.Self
         | ".." -> Some Axis.Parent
         | "self" -> Some Axis.Self
+        | @"/" -> Some Axis.Child
+        | "child" -> Some Axis.Child
         | "descendant" -> Some Axis.Descendant
         | "ancestor" -> Some Axis.Ancestor
         | "parent" -> Some Axis.Parent
@@ -454,47 +471,86 @@
         | "" -> Some Axis.Global
         | _ -> None
 
-    let parseAndHandleAxes(input: string) : Result<option<list<JPTerm>>* string, string> =
-        match parseAxis(input) with 
+    let parseAndHandleAxes(input: string) : Result<option<list<JPTerm>> * string, string> =
+        match parseAxisLong(input) with 
         | ParseError msg ->
             Error msg
 
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
-            | None -> Ok (None, input)  //no error but we don't have an axis
-            | Some str -> 
-                let firstSlashPos = str.IndexOf('/')
-                let n = str.Length - firstSlashPos - 1
-                printfn "n is %d, firstSlashPos is %d strLen is %d" n firstSlashPos str.Length
-                let axisStr = str[0..firstSlashPos - 1]
-                printfn "Axis string is %s" axisStr
+            | None -> 
+                //long did not work, try short
+                match parseAxis(input) with 
+                | ParseError msg ->
+                    Error msg
+
+                | ParseOK (maybeMatch, remaining') -> 
+                    match maybeMatch with 
+                    | None -> 
+                        Ok (None, input)  //no error but we don't have an axis
+                    | Some str -> 
+                        // Ok (Some str, remaining')
+                        let firstSlashPos = str.IndexOf('/')
+                        let n = str.Length - firstSlashPos - 1
+                        printfn "n is %d, firstSlashPos is %d strLen is %d" n firstSlashPos str.Length
+                        let axisStr = str[0..firstSlashPos - 1]
+                        printfn "Axis string is %s" axisStr
+                        let axis = getAxis(axisStr)
+                        match axis with
+                        | Some axis -> 
+                            let termA = (JPTerm.Axis axis)
+                            match n with 
+                            | Eq 0 ->
+                                // we have a single axis, such as .
+                                Ok (Some [termA], remaining')
+                                
+                            | Eq 1 ->
+                                // double slash following an axis - this is 2 axes, such as parent//, the one identified plus all descendants
+                                // in this case we also need to return a selection of Any
+                                let termC = (JPTerm.Axis Axis.Descendant)
+                                match axis with 
+                                | Axis.Global ->
+                                    Ok (Some [termA], remaining)
+                                | _ ->
+
+                                    let termB = (JPTerm.NodeName NodeName.Any)
+                                    Ok (Some [termC; termB; termA], remaining) // return terms in reverse order so they can easily be appeded to JPTerm list
+                                
+                            | _ -> Error (sprintf "Too many slashes in axes: %s" input)
+
+                        | None ->
+                            Error  (sprintf "Error: Unrecognised axis: %s" axisStr )
+            
+
+
+                // Ok (None, input)  //no error but we don't have an axis
+            | Some axisStr -> 
                 let axis = getAxis(axisStr)
                 match axis with
                 | Some axis -> 
                     let termA = (JPTerm.Axis axis)
-                    match n with 
-                    | Eq 0 ->
-                        // we have a single axis, such as .
-                        Ok (Some [termA], remaining)
-                        
-                    | Eq 1 ->
-                        // double slash following an axis - this is 2 axes, such as parent//, the one identified plus all descendants
-                        // in this case we also need to return a selection of Any
-                        let termC = (JPTerm.Axis Axis.Descendant)
-                        match axis with 
-                        | Axis.Global ->
-                            Ok (Some [termA], remaining)
-                        | _ ->
-
-                            let termB = (JPTerm.NodeName NodeName.Any)
-                            Ok (Some [termC; termB; termA], remaining) // return terms in reverse order so they can easily be appeded to JPTerm list
-                        
-                    | _ -> Error (sprintf "Too many slashes in axes: %s" input)
-
-                | _ ->
-                    Error  (sprintf "Error: Unrecognised axis: %s" axisStr )
-                
+                    Ok (Some [termA], remaining)
+                | None -> Error  (sprintf "Error: Unrecognised axis: %s" axisStr )
     
+
+    
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+                
     let parseAndHandleNodeSelection(input: string) : Result<option<list<JPTerm>>* string, string> =
         let (res, remaining) =
             match parseElementSelection(input) with
@@ -776,16 +832,16 @@
         // let opStack: Stack<BinaryOp> = Stack []
         // let rootStack = Stack.push rootOp opStacks
 
-        // let parseResult = parseAndHandleAxes(expr)
+        let parseResult = parseAndHandleAxes(expr)
         // let parseResult = parseAndHandleElementSelection(expr)
         // let parseResult = parseAndHandleAttributeSelection(expr)
         // let parseResult = parseAndHandleWhere(expr)
         // let parseResult = parseAndHandleFunctionName(expr)
-        let parseResult = parseAndHandleFunctionContents(expr)
+        // let parseResult = parseAndHandleFunctionContents(expr)
         printfn "%A" parseResult
 
         let rec gatherTerms(input: string, values: list<Value * DataType>, binOps: list<BinaryOp>, expecting: Expecting) : Result<list<Value * DataType> * list<BinaryOp>, string> =    
-            // this function does an initial pass through the expression, creating a list of terms
+            // this function does an initial spass through the expression, creating a list of terms
             Error "tbd"
         ()
     
@@ -793,4 +849,4 @@
         let exprRes = parseExpression(expr) // these values are just placeholders though they are returned from processCalcTree
         printfn "%A" exprRes
 
-    testParseExpression("(zz aa az)")
+    testParseExpression("//element")
