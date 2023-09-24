@@ -40,7 +40,6 @@
     | Descendant
     | DescendantOrSelf
     | AncestorOrSelf
-    | Global
 
     [<RequireQualifiedAccessAttribute>]
     type NodeType =
@@ -108,6 +107,23 @@
     // descendants/* -> the /* is redundant but functions as an element filter
     let xPath = "./station/pump1/@pressure"
 
+    let doubleQuote = '\u0022'    
+    let singleQuote = '\u0039'    
+    
+    let composeParsers(f1: string -> Result<Option<list<JPTerm>> * string, string>) (f2: string -> Result<option<list<JPTerm>> * string, string>) =
+        // composeParsers strings parsers together but is equivalent to oneOf in that it returns after the first successful parse
+        fun(inputStr: string)  ->
+            match f1(inputStr) with
+            | Ok (maybeTerm, remaining) ->
+                match maybeTerm with 
+                | Some _x ->
+                    Ok (maybeTerm, remaining)
+                | None ->
+                    f2(inputStr)                    
+            | Error msg -> Error msg
+ 
+    let (>=>) = composeParsers
+
     // Expression scope
         // axis -> NodeSelection -> maybeFilters -> axis
         // first  MUST come axis
@@ -129,22 +145,6 @@
         // int, float, string
 
 
-    let doubleQuote = '\u0022'    
-    let singleQuote = '\u0039'    
-    
-    let composeParsers(f1: string -> Result<Option<list<JPTerm>> * string, string>) (f2: string -> Result<option<list<JPTerm>> * string, string>) =
-        // composeParsers strings parsers together but is equivalent to oneOf in that it returns after the first successful parse
-        fun(inputStr: string)  ->
-            match f1(inputStr) with
-            | Ok (maybeTerm, remaining) ->
-                match maybeTerm with 
-                | Some _x ->
-                    Ok (maybeTerm, remaining)
-                | None ->
-                    f2(inputStr)                    
-            | Error msg -> Error msg
-            
-
     let reApply(re: string, s: string) =
         // s is a string to be parsed and it is expected that this operation will match some or none characters from the front
         // either as a direct match or as a single group in which case some marker characters, such as brackets will be thrown away
@@ -160,7 +160,8 @@
                     printfn "We have a match: %A %d" m.Captures[0].Value m.Length
                     printfn "We have a match: %A %d" m.Groups[0].Value m.Groups.Count
                     printfn "We have a match: %A %d" m.Groups[1].Value m.Groups.Count
-                    (Ok (Some m.Groups[1].Value), s[m.Groups[1].Value.Length ..])
+                    printfn "remaining::%s" s[m.Groups[1].Value.Length ..]
+                    (Ok (Some m.Groups[1].Value), s[m.Length ..])
                 | _ -> 
                     let msg = sprintf "More than one group matched in reg exp: %s on string: %s" re s
                     (Error msg), s
@@ -305,7 +306,7 @@
             | None ->ParseOK (None, s)
 
             | Some _str ->
-                ParseOK (maybeFuncName, remaining[1 .. remaining.Length -  2]) //strip off the brackets from the where clause
+                ParseOK (maybeFuncName, remaining[.. remaining.Length -  1]) 
                     
         | Error msg -> ParseError msg
 
@@ -352,13 +353,41 @@
             | None -> ParseOK (None, s)
 
             | Some _str ->
-                ParseOK (maybeWhere, remaining[1 .. remaining.Length -  2]) //strip off the brackets from the where clause
+                ParseOK (maybeWhere, remaining[.. remaining.Length -  1]) //strip off the brackets from the where clause
                     
         | Error msg -> ParseError msg
 
+    let parseAxisChild(s:string) =
+        let reChild = "^(\/)[A-Za-z]"
+        let newValueResult, remaining = reApplyX(reChild, s)
+        match newValueResult with 
+        | Ok maybeAxis -> 
         
-    let parseAxis(s:string) =
-        let reAxis: string = sprintf @"^([A-Za-z0-9\.]*\/+)."  //includes trailing slashes
+            match maybeAxis with 
+            | None -> ParseOK (None, s)
+
+            | Some _sstr ->
+                ParseOK (Some "", s[1..])
+                    
+        | Error msg -> ParseError msg
+    
+
+    let parseAxisDot(s:string) =
+        //working here -- this needs an overhaul to account for the fact that axes start with /
+        // after all slashes comes an  axis which if missing is child
+        let reAxis: string = sprintf @"^\/(\/|\.\.|\.)"  //includes leading and trailing slashes in group match
+        // /  starts axis or it ends it?
+        //if slash always starts an axis and if the axis nanme does not have :: then shor form assumed
+        // so expression always starts /  if ./ we make that /./ so we have /. and / self any child ./parent::element 
+        // ./element == self::*/element  and ../ == parent::*/element
+        //if fist character of xpath is not slash then prefix one
+        // /./element  after a slash comes an axis  which if blank is child /.  /.. //
+        // /element
+        // to match  
+            // (./) self any -- the slash should be left in  remaining .[where]  it would normally be [./@x = 'y']
+            // (../) parent any  ../..[where] can you do this? i think so he slash here does not mean child only another axis which if empty ischild
+            // (/) 
+            // (//)
         
         let newValueResult, remaining = reApplyX(reAxis, s)
         match newValueResult with 
@@ -371,9 +400,16 @@
                 ParseOK (maybeAxis, remaining)
                     
         | Error msg -> ParseError msg
+
+    let parseAxisShort (s:string) =
+        let ss = parseAxisChild(s)
+        match ss with
+        | ParseOK (None, _remaining) ->
+            parseAxisDot(s)
+        | _ -> ss
     
     let parseAxisLong(s:string) =
-        let reAxis: string = sprintf @"^([A-Za-z0-9]+)::"  //includes trailing slashes
+        let reAxis: string = sprintf @"^\/([A-Za-z0-9]+)::"  
         
         let newValueResult, remaining = reApplyX(reAxis, s)
         match newValueResult with 
@@ -461,15 +497,16 @@
         | "." -> Some Axis.Self
         | ".." -> Some Axis.Parent
         | "self" -> Some Axis.Self
-        | @"/" -> Some Axis.Child
+        | "" -> Some Axis.Child
         | "child" -> Some Axis.Child
         | "descendant" -> Some Axis.Descendant
         | "ancestor" -> Some Axis.Ancestor
         | "parent" -> Some Axis.Parent
         | "descendant-or-self" -> Some Axis.DescendantOrSelf
         | "ancestor-or-self" -> Some Axis.AncestorOrSelf
-        | "" -> Some Axis.Global
+        | @"/" -> Some Axis.Descendant
         | _ -> None
+
 
     let parseAndHandleAxes(input: string) : Result<option<list<JPTerm>> * string, string> =
         match parseAxisLong(input) with 
@@ -480,7 +517,8 @@
             match maybeMatch with 
             | None -> 
                 //long did not work, try short
-                match parseAxis(input) with 
+                // printfn "Trying short"
+                match parseAxisShort(input) with 
                 | ParseError msg ->
                     Error msg
 
@@ -488,42 +526,26 @@
                     match maybeMatch with 
                     | None -> 
                         Ok (None, input)  //no error but we don't have an axis
-                    | Some str -> 
+                    | Some strAxis -> 
                         // Ok (Some str, remaining')
-                        let firstSlashPos = str.IndexOf('/')
-                        let n = str.Length - firstSlashPos - 1
-                        printfn "n is %d, firstSlashPos is %d strLen is %d" n firstSlashPos str.Length
-                        let axisStr = str[0..firstSlashPos - 1]
-                        printfn "Axis string is %s" axisStr
-                        let axis = getAxis(axisStr)
+                        printfn "Axis string is %s" strAxis
+                        let axis = getAxis(strAxis)
                         match axis with
-                        | Some axis -> 
-                            let termA = (JPTerm.Axis axis)
-                            match n with 
-                            | Eq 0 ->
-                                // we have a single axis, such as .
-                                Ok (Some [termA], remaining')
-                                
-                            | Eq 1 ->
-                                // double slash following an axis - this is 2 axes, such as parent//, the one identified plus all descendants
-                                // in this case we also need to return a selection of Any
-                                let termC = (JPTerm.Axis Axis.Descendant)
-                                match axis with 
-                                | Axis.Global ->
-                                    Ok (Some [termA], remaining)
-                                | _ ->
+                        | Some axis' -> 
+                            let termAxis = (JPTerm.Axis axis')
+                            match axis' with 
+                            // self and parent get node selectors of any
+                            | Axis.Self | Axis.Parent ->
+                                let termAny = (JPTerm.NodeName NodeName.Any)
+                                Ok (Some [termAny; termAxis], remaining') // return terms in reverse order so they can easily be appeded to JPTerm list
 
-                                    let termB = (JPTerm.NodeName NodeName.Any)
-                                    Ok (Some [termC; termB; termA], remaining) // return terms in reverse order so they can easily be appeded to JPTerm list
-                                
-                            | _ -> Error (sprintf "Too many slashes in axes: %s" input)
+                            | _ -> 
+                                Ok (Some [termAxis], remaining')
 
                         | None ->
-                            Error  (sprintf "Error: Unrecognised axis: %s" axisStr )
-            
+                            Error  (sprintf "Error: Unrecognised axis: %s" strAxis )
+    
 
-
-                // Ok (None, input)  //no error but we don't have an axis
             | Some axisStr -> 
                 let axis = getAxis(axisStr)
                 match axis with
@@ -532,23 +554,6 @@
                     Ok (Some [termA], remaining)
                 | None -> Error  (sprintf "Error: Unrecognised axis: %s" axisStr )
     
-
-    
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         
                 
     let parseAndHandleNodeSelection(input: string) : Result<option<list<JPTerm>>* string, string> =
@@ -577,7 +582,7 @@
             | ParseOK (None, _s) -> 
                  (Ok None, input)
             | ParseOK (Some x, s) -> 
-                Ok (Some x), s
+                Ok (Some x), "(" + s // replace the opening bracket which was part of the regex wider match
 
             | ParseError msg -> (Error msg, input)
 
@@ -823,8 +828,7 @@
         | ParseError msg ->
             Error msg
 
-    let (>=>) = composeParsers
-
+    
     let parseAndHandleConstant = (parseAndHandleString singleQuote) >=> parseAndHandleNumber
     
     let rec parseExpression(expr: string) =
@@ -832,16 +836,16 @@
         // let opStack: Stack<BinaryOp> = Stack []
         // let rootStack = Stack.push rootOp opStacks
 
-        let parseResult = parseAndHandleAxes(expr)
+        // let parseResult = parseAndHandleAxes(expr)
         // let parseResult = parseAndHandleElementSelection(expr)
-        // let parseResult = parseAndHandleAttributeSelection(expr)
-        // let parseResult = parseAndHandleWhere(expr)
+        // let parseResult = parseAndHandleAttrib/zuteSelection(expr)
+        let parseResult = parseAndHandleWhere(expr)
         // let parseResult = parseAndHandleFunctionName(expr)
-        // let parseResult = parseAndHandleFunctionContents(expr)
+        let parseResult = parseAndHandleFunctionContents(expr)
         printfn "%A" parseResult
 
         let rec gatherTerms(input: string, values: list<Value * DataType>, binOps: list<BinaryOp>, expecting: Expecting) : Result<list<Value * DataType> * list<BinaryOp>, string> =    
-            // this function does an initial spass through the expression, creating a list of terms
+            // this function does an initial pass through the expression, creating a list of terms
             Error "tbd"
         ()
     
@@ -849,4 +853,4 @@
         let exprRes = parseExpression(expr) // these values are just placeholders though they are returned from processCalcTree
         printfn "%A" exprRes
 
-    testParseExpression("//element")
+    parseAndHandleFunctionName("fName([some where clause])= ./@abc")
