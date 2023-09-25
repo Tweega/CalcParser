@@ -17,6 +17,7 @@
         | true -> Some ()
         | _ -> None 
 
+    
     [<RequireQualifiedAccessAttribute>]
     type DataType =
     | Float
@@ -103,12 +104,44 @@
     | Filter of list<JPTerm>
     | Function of string * list<JPTerm>
 
+
+    type TerminationReason =
+    | Failure of string
+    | Success of list<JPTerm>
+
+    [<RequireQualifiedAccessAttribute>]
+    type ParseStatus =
+    | Parsing of string * list<JPTerm>
+    | Terminated of TerminationReason //add terminated reason Normal|Error
+
+    type Parserx  = {
+        ParseStatus: ParseStatus;
+        Run: string -> Result<string * list<JPTerm>, string>;
+        Teardown: unit -> unit;
+        Terms: list<list<JPTerm>>; //each parse operation returns a list of JPTerms; the list is flattened when parsing complete
+        XPath: string;
+    }
+    with 
+        member this.GetTerms() = (this.ParseStatus, this.Terms)
+
+    [<RequireQualifiedAccessAttribute>]
+    type Request = 
+        | Next
+        | Stop
+    
+    [<RequireQualifiedAccessAttribute>]
+    type NextRequest =
+        | NextRequest of (Request -> RequestResult)
+        | Terminated
+        
+    and RequestResult = ( * NextRequest)  //this is badly named - a result is implied
+
     // some axes identify nodes already such as parent and . so we don't need a NodeSelection
     // descendants/* -> the /* is redundant but functions as an element filter
     let xPath = "./station/pump1/@pressure"
 
-    let doubleQuote = '\u0022'    
-    let singleQuote = '\u0039'    
+    let doubleQuote = '\"'  
+    let singleQuote =  '\''   
     
     let composeParsers(f1: string -> Result<Option<list<JPTerm>> * string, string>) (f2: string -> Result<option<list<JPTerm>> * string, string>) =
         // composeParsers strings parsers together but is equivalent to oneOf in that it returns after the first successful parse
@@ -249,6 +282,7 @@
 
     let parseString(quot:char)(s:string) =
         let reString: string = sprintf @"^\%c(.+)\%c" quot quot
+        printfn "String reg ex: %s" reString
         let newValueResult, remaining = reApplyX(reString, s)      
         match newValueResult with 
         | Ok maybeStr -> 
@@ -407,7 +441,23 @@
         | ParseOK (None, _remaining) ->
             parseAxisDot(s)
         | _ -> ss
+
     
+    let parseAnyString (s:string) =
+        let ss = parseDoubleQuotedString(s)
+        match ss with
+        | ParseOK (None, _remaining) ->
+            parseQuotedString(s)
+        | _ -> ss
+    
+    let parseConstant (s:string) =
+        let ss = parseAnyString(s)
+        match ss with
+        | ParseOK (None, _remaining) ->
+            parseNumber(s)
+        | _ -> ss
+
+
     let parseAxisLong(s:string) =
         let reAxis: string = sprintf @"^\/([A-Za-z0-9]+)::"  
         
@@ -828,8 +878,94 @@
         | ParseError msg ->
             Error msg
 
+    let run((parser:Parser, nr): RequestResult) =
+        match parser.ParseStatus with 
+        | ParseStatus.Parsing _toParse -> 
+            match nr with 
+            | NextRequest.NextRequest reqFun ->
+                reqFun Request.Next // ### this is where the recursive function is actually called  and it is the last line
+            | NextRequest.Terminated ->
+                printfn "Stream terminated"
+                (parser, NextRequest.NextRequest (fun _r -> (parser, NextRequest.Terminated)))
+        | _ ->
+            (parser, NextRequest.NextRequest (fun _r -> (parser, NextRequest.Terminated)))
+        
     
-    let parseAndHandleConstant = (parseAndHandleString singleQuote) >=> parseAndHandleNumber
+    let doParse(parser, runMap: Map<ParseStatus, string -> Result<option<list<JPTerm>> * string,string>> , xPath: string) =
+
+        let rec parseXPathTail (parser: Parser) (request: Request): RequestResult =
+            match request with 
+            | Request.Next ->
+                match parser.ParseStatus with
+                | ParseStatus.Complete ->
+                    // parser.Teardown()
+                    (parser, NextRequest.NextRequest (fun _r -> (parser, NextRequest.Terminated)))
+                | ParseStatus.Parsing strToParse ->
+                    // parse next terms
+                    let termsResult = parser.Run(strToParse)
+                    let (terms', status') =
+                        match termsResult with
+                        | Ok (remaining, terms) ->
+                            let newStatus = 
+                                match remaining with 
+                                | Eq "" ->
+                                    ParseStatus.Complete
+                                | _-> 
+                                    ParseStatus.Parsing remaining
+                            (terms, newStatus)
+                        | Error msg ->
+                            printfn "Error: %s" msg
+
+                            ([], ParseStatus.Terminated)
+                    let parser' = {parser with ParseStatus = status'; Terms = terms' :: parser.Terms}
+                    (parser', NextRequest.NextRequest (parseXPathTail parser'))
+
+                | ParseStatus.Terminated ->
+                    (parser, NextRequest.NextRequest (fun _r -> (parser, NextRequest.Terminated)))
+
+            | Request.Stop ->
+                // early termination
+                parser.Teardown()
+                let parser' = {parser with ParseStatus = ParseStatus.Terminated}
+
+                (parser', NextRequest.NextRequest (fun _r -> (parser', NextRequest.Terminated)))
+
+
+        (parser, NextRequest.NextRequest (parseXPathTail parser))
+        
+    ///contexts:
+    ///  node selection : Axis or where
+    /// Axis : Node selection
+    /// where: Recipe Funcion or Recipe BinOp
+    ///     Recipe Function : functionName then JPTerm (node selection or constant) then JPTerm (node selection or constant)
+    ///     Recipe BinOp: JPTerm (node selection or constant) then BinOp then JPTerm (node selection or constant)
+
+    let  initialParser = {
+            ParseStatus = ParseStatus.Parsing strToParse;
+            Run = parseAndHandleAxes
+            Teardown = fun () -> ();
+            Terms = [];
+            XPath = strToParse
+        }
+        
+    let parseXPath (strToParse: string) =
+        
+        let mutable linesRead = 0
+        let mutable nextRequest: RequestResult = doParse (initialParser, strToParse) 
+        let mutable parser = initialParser
+        let (parser', _nr) = nextRequest
+        parser <- parser'
+        while true   do            
+            nextRequest <- run nextRequest
+            let (nextParser, _nr) = nextRequest
+            parser <- nextParser
+            
+        printfn "finished: %d lines read" linesRead
+    
+    
+
+    
+    // let parseConstant = (parseAndHandleString) >=> parseAndHandleNumber
     
     let rec parseExpression(expr: string) =
         // let rootOp = makeRootOp()
@@ -842,6 +978,7 @@
         let parseResult = parseAndHandleWhere(expr)
         // let parseResult = parseAndHandleFunctionName(expr)
         let parseResult = parseAndHandleFunctionContents(expr)
+        // let parseResult = parseAndHandleConstant(expr)
         printfn "%A" parseResult
 
         let rec gatherTerms(input: string, values: list<Value * DataType>, binOps: list<BinaryOp>, expecting: Expecting) : Result<list<Value * DataType> * list<BinaryOp>, string> =    
@@ -853,4 +990,4 @@
         let exprRes = parseExpression(expr) // these values are just placeholders though they are returned from processCalcTree
         printfn "%A" exprRes
 
-    parseAndHandleFunctionName("fName([some where clause])= ./@abc")
+    parseConstant("'hello' there")
