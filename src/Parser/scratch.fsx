@@ -81,8 +81,11 @@
     } 
     and Filter = 
     | BinaryComparison of BinaryComparison
-    | Function of string * FilterExpression * FilterExpression
+    | Function of Function
     
+    and Function =
+    | Function of string * FilterExpression * FilterExpression
+
     and FilterExpression = 
     | Expression of Expression //nodeList
     | Constant of ConstantValue
@@ -100,9 +103,10 @@
     | Axis of Axis
     | FilterExpression of FilterExpression
     | NodeSelection of NodeSelection
-    | NodeName of NodeName
-    | Filter of list<JPTerm>
-    | Function of string * list<JPTerm>
+    // | NodeName of NodeName
+    | Filter of Filter
+    | Function of Function
+    | BinaryComparison of BinaryComparison
 
 
     type TerminationReason =
@@ -111,7 +115,7 @@
 
     [<RequireQualifiedAccessAttribute>]
     type ParseStatus =
-    | Parsing of string * list<JPTerm>
+    | Parsing of list<JPTerm>
     | Terminated of TerminationReason //add terminated reason Normal|Error
 
     type Parserx  = {
@@ -130,11 +134,25 @@
         | Stop
     
     [<RequireQualifiedAccessAttribute>]
-    type NextRequest =
-        | NextRequest of (Request -> RequestResult)
-        | Terminated
+    type ParseRequest =
+        | ParseNext of (Request -> RequestResponse)
+        | CancelParse
         
-    and RequestResult = ( * NextRequest)  //this is badly named - a result is implied
+    and RequestResponse = (ParseStatus * ParseRequest) 
+
+
+
+    type INode =
+        abstract GetElements : unit -> list<INode>
+        abstract GetAttributes : unit -> list<INode>
+        abstract GetParent : unit -> INode
+        abstract GetName : unit -> string
+        abstract GetValue: unit -> string //make this typed?
+        abstract GetType: unit -> NodeType
+        // abstract GetLinkedNodes: unit -> list<INode>
+        // abstract GetCategories: unit -> list<string>
+        
+
 
     // some axes identify nodes already such as parent and . so we don't need a NodeSelection
     // descendants/* -> the /* is redundant but functions as an element filter
@@ -155,6 +173,21 @@
                     f2(inputStr)                    
             | Error msg -> Error msg
  
+    let composeXPathsIntersect(f1: list<INode> -> list<INode>, f2: list<INode> -> list<INode>) =
+        fun(iNodes: list<INode>) ->
+            iNodes |> (f1 >> f2)
+
+    let (>>=) = composeXPathsIntersect
+
+    // let composeXPathsUnion(f1: list<INode> -> list<INode>, f2: list<INode> -> list<INode>) =
+    //     // to implement or we will need getFullPath for each iNode and  this full path will be the key
+    //     fun(iNodes1: list<INode>)(iNodes2: list<INode>) ->
+    //         let q1 = iNodes1 |> f1
+    //         let q2 = iNodes2 |> f2
+
+
+
+
     let (>=>) = composeParsers
 
     // Expression scope
@@ -878,31 +911,178 @@
         | ParseError msg ->
             Error msg
 
-    let run((parser:Parser, nr): RequestResult) =
-        match parser.ParseStatus with 
-        | ParseStatus.Parsing _toParse -> 
-            match nr with 
-            | NextRequest.NextRequest reqFun ->
-                reqFun Request.Next // ### this is where the recursive function is actually called  and it is the last line
-            | NextRequest.Terminated ->
-                printfn "Stream terminated"
-                (parser, NextRequest.NextRequest (fun _r -> (parser, NextRequest.Terminated)))
-        | _ ->
-            (parser, NextRequest.NextRequest (fun _r -> (parser, NextRequest.Terminated)))
+    //is this function needed - does not do very much working here do we need to sketch out what we are doing??
+    // this is different to reading a file
+    // there is a point  at which work is done, but the context of a file  read does not change
+    // whereas the context of a parsing operation does change
+    // we need to carry the JP list through and always have access to the most recent conttext
+    // after where clauses we can revert context to an earlier state so context  is the head of the JP  list at the
+    //point of entry to the parse function
+    let run(pr: ParseRequest) =
+        match pr with 
+        | ParseRequest.ParseNext reqFun ->
+            reqFun Request.Next // ### this is where the recursive function is actually called  and it is the last line
+
+        | ParseRequest.CancelParse ->
+            printfn "Parsing already terminated"
+            let status = ParseStatus.Terminated (TerminationReason.Failure "Termination request already received")
+
+            (status, ParseRequest.CancelParse)
+
+    let parseInt16 (s:string) : option<int16> = 
+        match System.Int16.TryParse(s) with 
+        | true, n -> Some n
+        | _ -> None
+
+    let parseInt32 (s:string) : option<int32> = 
+        match System.Int32.TryParse(s) with 
+        | true, n -> Some n
+        | _ -> None
+
+    let parseInt64 (s:string) : option<int64> = 
+        match System.Int64.TryParse(s) with 
+        | true, n -> Some n
+        | _ -> None
+
+    let parseFloat32 (s:string) : option<float32> = 
+        match System.Single.TryParse(s) with 
+        | true, n -> Some n
+        | _ -> None
+    
+    
+    let parseFloat64 (s:string) : option<float> = 
+        match System.Double.TryParse(s) with 
+        | true, n -> Some n
+        | _ -> None
+    let inline eq<^T when ^T: equality>(t1:^T, t2:^T) = 
+        t1 = t2
+    let inline gt<^T when ^T: comparison>(t1:^T, t2:^T) = 
+        t1 > t2
+    let inline lt<^T when ^T: comparison>(t1:^T, t2:^T) = 
+        t1 < t2
+    let inline gte<^T when ^T: comparison>(t1:^T, t2:^T) = 
+        t1 >= t2
+    let inline lte<^T when ^T: comparison>(t1:^T, t2:^T) = 
+        t1 <= t2
+
+    let  eqInt(iNode:INode, i:int) =
+        match parseInt32(iNode.GetValue()) with
+        | Some i' -> eq(i', i)
+        | _ -> false
+
+    let  eqFloat(iNode:INode, f:float) =
+        match parseFloat64(iNode.GetValue()) with
+        | Some f' -> eq(f', f)
+        | _ -> false
+    
+    let  eqString(iNode:INode, s:string) =
+        eq(iNode.GetValue(), s)
+
+    let filterByName(nodeName:NodeName) (iNodes:list<INode>) =
+        iNodes |>
+        List.filter(fun i' ->
+                match nodeName with 
+                | NodeName.Any -> true
+                | NodeName.NodeName name -> i'.GetName() = name
+            )
+
+    
+
+    let getElements(nodeName: NodeName, nodes: list<INode>) : list<INode>=
+        nodes |>
+        List.fold(fun acc iNode ->
+            let filteredNodes = iNode.GetElements() |> filterByName nodeName
+            filteredNodes |>
+            List.fold(fun acc' i' ->
+                i' :: acc'
+            ) acc
+
+        ) []
+        
+    let getAttributes(nodeName: NodeName, nodes: list<INode>) : list<INode>=
+        nodes |>
+        List.fold(fun acc iNode ->
+            let filteredNodes = iNode.GetAttributes() |> filterByName nodeName
+            filteredNodes |>
+            List.fold(fun acc' i' ->
+                i' :: acc'
+            ) acc
+
+        ) []
+
+    let getDescendants(nodeName: NodeName, nodes: list<INode>) : list<INode> =
+        // this will mangle document order
+        // if we need to preserve document order we need to index elements in order that they were read in
+        // their internal order should be oreserved by the folds, but subsequent sorting might lose that
+        // wemay eventually want to index against parent nodes or similar. Ignore order for now
+        let rec descendants(nodesToProcess:list<INode>, acc) =
+            match nodesToProcess with
+            | [] -> acc
+            | h :: t ->
+                let newAcc = 
+                    [h]
+                    |> (filterByName nodeName)
+                    |> List.fold (fun acc' i ->
+                        i :: acc'
+                    ) acc
+                
+                // add child elements to list of nodes to be processed, ignoring head which is being assessed now.
+                match h.GetElements() with 
+                | []  -> 
+                    newAcc                    
+                | childElements ->                    
+                    let newProcessList = 
+                        childElements |> 
+                        List.fold (fun acc' i ->
+                            i :: acc'
+                        ) t  
+                    descendants (newProcessList, newAcc)
+        descendants(nodes, [])
+        
+    
+    let getParent(nodeName: NodeName, nodes: list<INode>) : list<INode> =
+        nodes |>
+        List.fold(fun acc iNode ->
+            let filteredNodes = [iNode.GetParent()] |> filterByName nodeName
+            filteredNodes |>
+            List.fold(fun acc' i' ->
+                i' :: acc'
+            ) acc
+        ) []
+
+        
+        
+    let getAncestors(nodeName: NodeName, nodes: list<INode>) : list<INode> =
+        // this also mangles document order review tk - possibly we add child then all its children
+        // so perhaps we only need to reverse the list before returning - this would be for a depth first order
+        let rec ancestors(nodesToProcess:list<INode>, acc) =
+            match nodesToProcess with
+            | [] -> acc
+            | h :: t ->
+                let newAcc = 
+                    [h]
+                    |> (filterByName nodeName)
+                    |> List.fold (fun acc' i ->
+                        i :: acc'
+                    ) acc
+                
+                // add child elements to list of nodes to be processed, ignoring head which is being assessed now.
+                 
+                let newProcessList = 
+                    h.GetParent() :: t  
+                ancestors (newProcessList, newAcc)
+        ancestors(nodes, [])
         
     
     let doParse(parser, runMap: Map<ParseStatus, string -> Result<option<list<JPTerm>> * string,string>> , xPath: string) =
 
-        let rec parseXPathTail (parser: Parser) (request: Request): RequestResult =
+        // this function is invoked by run
+        let rec parseXPathTail (request: Request): RequestResponse =
             match request with 
             | Request.Next ->
-                match parser.ParseStatus with
-                | ParseStatus.Complete ->
-                    // parser.Teardown()
-                    (parser, NextRequest.NextRequest (fun _r -> (parser, NextRequest.Terminated)))
-                | ParseStatus.Parsing strToParse ->
+                // run function to get next terms
                     // parse next terms
-                    let termsResult = parser.Run(strToParse)
+                    let requestResponse = run request
                     let (terms', status') =
                         match termsResult with
                         | Ok (remaining, terms) ->
@@ -951,7 +1131,7 @@
     let parseXPath (strToParse: string) =
         
         let mutable linesRead = 0
-        let mutable nextRequest: RequestResult = doParse (initialParser, strToParse) 
+        let mutable nextRequest: RequestResponse = doParse (initialParser, strToParse) 
         let mutable parser = initialParser
         let (parser', _nr) = nextRequest
         parser <- parser'
@@ -964,6 +1144,7 @@
     
     
 
+    
     
     // let parseConstant = (parseAndHandleString) >=> parseAndHandleNumber
     
