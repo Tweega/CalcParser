@@ -2,3 +2,6 @@
 obj/
 bin/
 .fake
+src/App/afAnalysis.txt
+src/Parser/AF.xml
+src/Parser/calc example.txt
