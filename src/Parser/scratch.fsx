@@ -59,14 +59,9 @@
     | NodeName of string
     | Any
 
-    [<RequireQualifiedAccessAttribute>]
-    type TermType =
-    | Float of IntegralPart * FractionPart
-    | String of string
-
      type NodeSelection = {
-        Name: string;
-        Type: NodeType;
+        NodeName: NodeName;
+        NodeType: NodeType;
     }
 
     type ConstantValue = {
@@ -97,16 +92,32 @@
     | Expression
     | Empty
 
+    
+    [<RequireQualifiedAccessAttribute>]
+    type TermType =
+    | Axis
+    | NodeSelection
+
     // we could add starting position in the original parse string to indicate where failure is tk
     [<RequireQualifiedAccessAttribute>]
     type JPTerm =
     | Axis of Axis
     | FilterExpression of FilterExpression
     | NodeSelection of NodeSelection
-    // | NodeName of NodeName
+    | NodeName of NodeName  //temporary
     | Filter of Filter
     | Function of Function
     | BinaryComparison of BinaryComparison
+    with
+        static member getTermType(term:JPTerm) : TermType =
+            match term with
+            | JPTerm.Axis _ -> TermType.Axis
+            | _ -> TermType.NodeSelection
+        static member getInputs(term:JPTerm) : list<TermType> =
+            match term with
+            | JPTerm.Axis _ -> [TermType.NodeSelection]
+            | JPTerm.NodeSelection _ -> []
+            | _ -> []
 
 
     type TerminationReason =
@@ -126,7 +137,7 @@
         XPath: string;
     }
     with 
-        member this.GetTerms() = (this.ParseStatus, this.Terms)
+        member this.getTerms() = (this.ParseStatus, this.Terms)
 
     [<RequireQualifiedAccessAttribute>]
     type Request = 
@@ -143,15 +154,25 @@
 
 
     type INode =
-        abstract GetElements : unit -> list<INode>
-        abstract GetAttributes : unit -> list<INode>
-        abstract GetParent : unit -> INode
-        abstract GetName : unit -> string
-        abstract GetValue: unit -> string //make this typed?
-        abstract GetType: unit -> NodeType
-        // abstract GetLinkedNodes: unit -> list<INode>
-        // abstract GetCategories: unit -> list<string>
+        abstract getElementNodes : unit -> list<INode>
+        abstract getAttributeNodes : unit -> list<INode>
+        // abstract getAttributes : unit -> list<IAttribute>
+        abstract getAttribute : string -> option<IAttribute>
+        // abstract getNodes : NodeType -> list<INode>
+        abstract getParent : unit -> INode
+        abstract getName : unit -> string
+        abstract getNodeType: unit -> NodeType
+        // abstract getLinkedNodes: unit -> list<INode>
+        // abstract getCategories: unit -> list<string>
         
+    and IAttribute =
+        inherit INode
+        abstract getValue: unit -> string
+        abstract getDataType: unit -> DataType
+        
+    and IAttributeList =
+        abstract map : ('T -> 'U) * 'T -> list<'U>
+        // abstract bind : ('T -> list<'U>) * 'T -> list<'U>
 
 
     // some axes identify nodes already such as parent and . so we don't need a NodeSelection
@@ -173,7 +194,7 @@
                     f2(inputStr)                    
             | Error msg -> Error msg
  
-    let composeXPathsIntersect(f1: list<INode> -> list<INode>, f2: list<INode> -> list<INode>) =
+    let composeXPathsIntersect(f1: list<INode> -> list<INode>)(f2: list<INode> -> list<INode>) =
         fun(iNodes: list<INode>) ->
             iNodes |> (f1 >> f2)
 
@@ -185,31 +206,7 @@
     //         let q1 = iNodes1 |> f1
     //         let q2 = iNodes2 |> f2
 
-
-
-
     let (>=>) = composeParsers
-
-    // Expression scope
-        // axis -> NodeSelection -> maybeFilters -> axis
-        // first  MUST come axis
-        // second MUST comeNodeSelection
-        // third optionally filters
-    
-    //Filter scope []
-        // one of
-            // function name then expression (axis/node  selection etc)
-            // FilterExpression
-
-    // FilterExpression scope
-        //one of
-            //constant
-            //Expression
-
-    //COnstantscope
-        //one of 
-        // int, float, string
-
 
     let reApply(re: string, s: string) =
         // s is a string to be parsed and it is expected that this operation will match some or none characters from the front
@@ -655,7 +652,7 @@
         | Ok maybeMatch -> 
             match maybeMatch with 
             | Some (nodeName, nodeType) ->                                
-                Ok (Some [JPTerm.NodeSelection {Name = nodeName; Type = nodeType}], remaining)
+                Ok (Some [JPTerm.NodeSelection {NodeName = (NodeName.NodeName nodeName); NodeType = nodeType}], remaining)
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
 
@@ -715,7 +712,7 @@
         | Ok maybeMatch -> 
             match maybeMatch with 
             | Some (nodeName, nodeType) ->                                
-                Ok (Some [JPTerm.NodeSelection {Name = nodeName; Type = nodeType}], remaining)
+                Ok (Some [JPTerm.NodeSelection {NodeName = (NodeName.NodeName nodeName); NodeType = nodeType}], remaining)
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
 
@@ -737,7 +734,7 @@
         | Ok maybeMatch -> 
             match maybeMatch with 
             | Some (nodeName, nodeType) ->                                
-                Ok (Some [JPTerm.NodeSelection {Name = nodeName; Type = nodeType}], remaining)
+                Ok (Some [JPTerm.NodeSelection {NodeName = (NodeName.NodeName nodeName); NodeType = nodeType}], remaining)
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
 
@@ -779,7 +776,7 @@
         | Ok maybeMatch -> 
             match maybeMatch with 
             | Some (nodeName, nodeType) ->                                
-                Ok (Some [JPTerm.NodeSelection {Name = nodeName; Type = nodeType}], remaining)
+                Ok (Some [JPTerm.NodeSelection {NodeName = (NodeName.NodeName nodeName); NodeType = nodeType}], remaining)
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
 
@@ -799,7 +796,7 @@
         | Ok maybeMatch -> 
             match maybeMatch with 
             | Some (nodeName, nodeType) ->                                
-                Ok (Some [JPTerm.NodeSelection {Name = nodeName; Type = nodeType}], remaining)
+                Ok (Some [JPTerm.NodeSelection {NodeName = (NodeName.NodeName nodeName); NodeType = nodeType}], remaining)
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
 
@@ -954,63 +951,107 @@
         match System.Double.TryParse(s) with 
         | true, n -> Some n
         | _ -> None
-    let inline eq<^T when ^T: equality>(t1:^T, t2:^T) = 
+   
+   
+    
+    let inline eq<'T when 'T: equality>(t1:'T, t2:'T) = 
         t1 = t2
-    let inline gt<^T when ^T: comparison>(t1:^T, t2:^T) = 
+    let inline gt<'T when ^T: comparison>(t1:'T, t2:'T) = 
         t1 > t2
-    let inline lt<^T when ^T: comparison>(t1:^T, t2:^T) = 
+    let inline lt<'T when ^T: comparison>(t1:'T, t2:'T) = 
         t1 < t2
-    let inline gte<^T when ^T: comparison>(t1:^T, t2:^T) = 
+    let inline gte<'T when ^T: comparison>(t1:'T, t2:'T) = 
         t1 >= t2
-    let inline lte<^T when ^T: comparison>(t1:^T, t2:^T) = 
+    let inline lte<'T when ^T: comparison>(t1:'T, t2:'T) = 
         t1 <= t2
 
-    let  eqInt(iNode:INode, i:int) =
-        match parseInt32(iNode.GetValue()) with
+    let  eqInt(iNode:IAttribute, i:int) =
+        match parseInt32(iNode.getValue()) with
         | Some i' -> eq(i', i)
         | _ -> false
 
-    let  eqFloat(iNode:INode, f:float) =
-        match parseFloat64(iNode.GetValue()) with
+    let  eqFloat(iNode:IAttribute, f:float) =
+        match parseFloat64(iNode.getValue()) with
         | Some f' -> eq(f', f)
         | _ -> false
     
-    let  eqString(iNode:INode, s:string) =
-        eq(iNode.GetValue(), s)
+    let  eqString(iNode:IAttribute, s:string) =
+        eq(iNode.getValue(), s)
 
     let filterByName(nodeName:NodeName) (iNodes:list<INode>) =
         iNodes |>
         List.filter(fun i' ->
                 match nodeName with 
                 | NodeName.Any -> true
-                | NodeName.NodeName name -> i'.GetName() = name
+                | NodeName.NodeName name -> i'.getName() = name
             )
 
-    
+    type ElementNode = 
+        {
+            Name: string;
+            AttributeMap: Map<string, IAttribute>
+            Elements: list<INode>
+            Parent:INode;
 
-    let getElements(nodeName: NodeName, nodes: list<INode>) : list<INode>=
+        }  
+        interface INode with
+            member this.getName() = this.Name
+            member this.getElementNodes() = this.Elements
+            member this.getAttributeNodes() = this.AttributeMap |> Map.toList |> List.map(fun i -> snd(i) :> INode)
+            member this.getParent() = this.Parent
+            member this.getNodeType() = NodeType.Element
+            member this.getAttribute(attrName) = Map.tryFind attrName this.AttributeMap
+
+    type AttributeNode = 
+        {
+            Name: string;
+            Value: string;
+            Parent: INode;
+            AttributeMap: Map<string, IAttribute>
+            DataType:DataType;
+        }  
+        interface IAttribute with
+            member this.getName() = this.Name
+            member this.getElementNodes() = []
+            member this.getAttributeNodes() = this.AttributeMap |> Map.toList |> List.map(fun i -> snd(i) :> INode)
+            member this.getParent() = this.Parent
+            member this.getNodeType() = NodeType.Attribute
+            member this.getValue() = this.Value
+            member this.getDataType() = this.DataType;
+            member this.getAttribute(attrName) = Map.tryFind attrName this.AttributeMap
+            
+            // interface IAttribute
+
+
+    let getNodes({NodeName = nodeName; NodeType = nodeType}: NodeSelection)(nodes: list<INode>) : list<INode> =
+        let fetchNodes = 
+            match nodeType with
+            | NodeType.Attribute -> 
+                fun(iNode:INode) -> 
+                    iNode.getAttributeNodes()
+            | NodeType.Element ->
+                fun(iNode:INode) -> 
+                    iNode.getElementNodes()
+
         nodes |>
         List.fold(fun acc iNode ->
-            let filteredNodes = iNode.GetElements() |> filterByName nodeName
+            let filteredNodes = fetchNodes(iNode) |> filterByName nodeName
             filteredNodes |>
             List.fold(fun acc' i' ->
                 i' :: acc'
             ) acc
-
-        ) []
-        
-    let getAttributes(nodeName: NodeName, nodes: list<INode>) : list<INode>=
-        nodes |>
-        List.fold(fun acc iNode ->
-            let filteredNodes = iNode.GetAttributes() |> filterByName nodeName
-            filteredNodes |>
-            List.fold(fun acc' i' ->
-                i' :: acc'
-            ) acc
-
         ) []
 
-    let getDescendants(nodeName: NodeName, nodes: list<INode>) : list<INode> =
+    let getSelf(nodeName: NodeName)(nodes: list<INode>) : list<INode> =
+        match nodeName with 
+        | NodeName.Any -> nodes
+        | NodeName.NodeName nodeName ->
+            nodes |>
+            List.filter(fun i ->
+                i.getName() = nodeName
+            )
+            
+    let getDescendantsOrSelf(nodeName: NodeName)(nodes: list<INode>) : list<INode> =
         // this will mangle document order
         // if we need to preserve document order we need to index elements in order that they were read in
         // their internal order should be oreserved by the folds, but subsequent sorting might lose that
@@ -1027,7 +1068,8 @@
                     ) acc
                 
                 // add child elements to list of nodes to be processed, ignoring head which is being assessed now.
-                match h.GetElements() with 
+                // this doesnot inclde attributes.  to  get those add an axis as in .//pump/@pressure
+                match h.getElementNodes() with 
                 | []  -> 
                     newAcc                    
                 | childElements ->                    
@@ -1038,12 +1080,16 @@
                         ) t  
                     descendants (newProcessList, newAcc)
         descendants(nodes, [])
-        
     
-    let getParent(nodeName: NodeName, nodes: list<INode>) : list<INode> =
+    let getDescendants(nodeName: NodeName)(nodes: list<INode>) : list<INode> =
+        let childNodes = getNodes({NodeName=NodeName.Any; NodeType=NodeType.Element})(nodes)
+        getDescendantsOrSelf nodeName childNodes
+
+    
+    let getParent(nodeName: NodeName)(nodes: list<INode>) : list<INode> =
         nodes |>
         List.fold(fun acc iNode ->
-            let filteredNodes = [iNode.GetParent()] |> filterByName nodeName
+            let filteredNodes = [iNode.getParent()] |> filterByName nodeName
             filteredNodes |>
             List.fold(fun acc' i' ->
                 i' :: acc'
@@ -1052,7 +1098,7 @@
 
         
         
-    let getAncestors(nodeName: NodeName, nodes: list<INode>) : list<INode> =
+    let getAncestorsOrSelf(nodeName: NodeName)(nodes: list<INode>) : list<INode> =
         // this also mangles document order review tk - possibly we add child then all its children
         // so perhaps we only need to reverse the list before returning - this would be for a depth first order
         let rec ancestors(nodesToProcess:list<INode>, acc) =
@@ -1066,14 +1112,144 @@
                         i :: acc'
                     ) acc
                 
-                // add child elements to list of nodes to be processed, ignoring head which is being assessed now.
-                 
+                // add parent elements to list of nodes to be processed, ignoring head which is being assessed now.
                 let newProcessList = 
-                    h.GetParent() :: t  
+                    h.getParent() :: t  
                 ancestors (newProcessList, newAcc)
         ancestors(nodes, [])
         
+    let getAncestors(nodeName: NodeName)(nodes: list<INode>) : list<INode> =
+        let parentNodes = getParent nodeName nodes
+        getAncestorsOrSelf nodeName parentNodes
+
+    // is this a lift? applying avalue to a function is a way of extracting data so we lift the second function into the first?    
+    let inline lift<'a, 'b, 'c> (bc: 'b ->'c) (ab: 'a -> 'b) : 'a -> 'c =
+        fun (a:'a) ->
+            a |> (ab >> bc)
+
+    // let xp = "./pump"
+    // let xp' = 
+    //     fun (str:string) (nodes) ->
+    //         getElements (NodeName.NodeName str) nodes
+
     
+    // let xp2 = "./pump/pressure"
+    // let xp2' = 
+    //     fun (str:string) (nodes) ->
+    //         getElements (NodeName.NodeName str) nodes
+    
+    // let f1 = getElements (NodeName.NodeName "pump")
+    // let f2 = getAttributes (NodeName.NodeName "pressure")
+    // let f3 = f1 >>= f2 //alernatively lift f1 f2
+
+    // [axis:child][nodename:pump][where:JPList]function:name, JPList,JP:ist]
+    //so we can have functions that expect differing argument numbers
+    //better to read in as xml and apply xpath? maybe
+    // a function places on the stack a cheeseboard. when this is full it is added to accumulator of NodeList->NodeList
+    // which will be composed together
+
+    type ArgCollection= {
+        InputTypes: list<TermType>
+        Inputs: list<JPTerm>
+        Arity: int
+    }
+
+    // Type abbreviations cannot have augmentations (member functions) - hence wrapper for result
+    type ArgApplicationResult = {
+        JValue: Result<ArgCollection * bool, string>
+    }
+
+    with 
+        static member lift(argCollection:ArgCollection) : ArgApplicationResult = {JValue = Ok (argCollection, false)} 
+        member this.run() =
+            this.JValue 
+        member this.arity = this.Arity;
+        member this.addTerm(term:JPTerm) =
+            let gg = 
+                match this.run() with
+                | Ok (argCollection, _b) ->
+                    match argCollection.InputTypes with
+                    | [] -> Error "No values expected when adding term" 
+                    | inType :: t -> 
+                        let isLast =
+                            match t with
+                            | [] ->  true
+                            | _ -> false
+                        let termType = JPTerm.getTermType(term)
+                        match termType with
+                            | Eq inType ->
+                                Ok ({argCollection with Inputs = term :: argCollection.Inputs; InputTypes = t}, isLast)
+                            | _ ->
+                                let msg = sprintf "Type mismatch: %A does not match %A" inType termType
+                                Error msg
+                | err -> err
+            {JValue = gg}
+        member this.getInputs() =
+            match this.JValue with
+                | Ok (argCollection, _b) ->
+                    argCollection.Inputs |> List.rev
+                | _ -> []
+                
+
+        static member bind(afb: ArgCollection -> ArgApplicationResult)({JValue = jvRes}:ArgApplicationResult): ArgApplicationResult = 
+            match jvRes with
+            | Ok (a, _b) -> afb(a)
+            | _  -> {JValue = jvRes}
+            
+
+    type XPathStack = list<JPTerm>
+    type NodeTansformStack = list<INode> -> list<INode>
+    
+    // a wrapper  function so that all axis functions get passed NodeSelection though not  all axes need node type
+    let ff(g:NodeName -> list<INode> -> list<INode>) =
+        // for functions that only select Elements and do not need to distinguish on node type
+        fun (nodeSelection:NodeSelection) ->
+            g nodeSelection.NodeName
+                        
+    let argCollection = [JPTerm.Axis Axis.Self; JPTerm.NodeSelection {NodeName = NodeName.NodeName "pump"; NodeType = NodeType.Element};]
+
+    let axisMapList =
+        [
+            (Axis.Self, (ff getSelf))
+            (Axis.Child, getNodes) //this function needs to know  the node type
+            (Axis.Parent, ff getParent)
+            (Axis.Ancestor, ff getAncestors)
+            (Axis.AncestorOrSelf, ff getAncestors)
+            (Axis.Descendant, ff getDescendants)
+            (Axis.DescendantOrSelf, ff getDescendants)
+        ]
+
+    let axisArgs: ArgCollection = {
+        InputTypes = [TermType.Axis; TermType.NodeSelection]
+        Inputs = []
+    }
+    
+    let argApplicationResult' = 
+        argCollection |>
+        List.fold(fun (acc:ArgApplicationResult) i ->
+            acc.addTerm(i)
+        ) {JValue = Ok ({InputTypes = [TermType.Axis; TermType.NodeSelection]; Inputs=[]}, true)}
+    
+    let inputs = argApplicationResult'.getInputs()
+
+    
+                    
+
+
+    // if i pass in a term to function container it has a set of inputs it needs
+    // it collects n terms, when it has them it applies them and the function becomes a value (nodelist?)
+
+
+
+    // the issue we will have here is that successive where clauses share the same context
+    //  we had something like this with d3 chart in ElmishD3
+    // should be alright - it is one filter applied after another
+    // ./pump[./@pressure > 1][./@flow > 3]
+
+    // if I have a list<JPTerm> that should map into a function
+    // an axis function expects a nodeName
+
+
     let doParse(parser, runMap: Map<ParseStatus, string -> Result<option<list<JPTerm>> * string,string>> , xPath: string) =
 
         // this function is invoked by run
