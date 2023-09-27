@@ -1255,6 +1255,7 @@
                 printfn "%s" msg
                 noOp        
     }
+
     let builderMap:Map<TermKey, XPTerm> = 
         [
             (TermKey.Axis Axis.Child, XPTerm.Builder childAxisBuilder)
@@ -1264,9 +1265,9 @@
 
 
 
-    let jpTerms' = [JPTerm.Axis Axis.Self; JPTerm.NodeSelection {NodeName = NodeName.NodeName "pump"; NodeType = NodeType.Element};]
+    let jpTerms' = [JPTerm.Axis Axis.Child; JPTerm.NodeSelection {NodeName = NodeName.NodeName "pump"; NodeType = NodeType.Element};]
     let xpTerms = 
-        let (xpTerms, status') =
+        let (terms, status') =
             jpTerms' |>
             List.fold(fun  (acc: list<XPTerm>, status:option<string>) i ->
                 match status with 
@@ -1283,13 +1284,15 @@
             )([],None)
         match status' with 
         | Some err ->
-            printfn "%s" err
+            printfn "Error: %s" err
             []
-        | None -> xpTerms
+        | None -> terms
 
 
     let compileXPathFromTerms(xpTerms:list<XPTerm>) = 
         let rec applyTerm(accSelectors':NodeTansformStack, accBuilders':list<FunctionBuilder>, jpTerm': JPTerm) =
+            printfn "Applyin JPTerm: %A" jpTerm'
+            
             match accBuilders' with
             | h :: t ->
                 let applicationResult = h.applyArg(jpTerm')
@@ -1315,24 +1318,34 @@
                     let msg = sprintf "Top level term is not a selector: %A" jpTerm'
                     Error msg
 
+        printfn "xpTerms: %A" xpTerms
 
-        xpTerms |>
-        List.fold(fun (maybeError:option<string>, accSelectors:NodeTansformStack, accBuilders:list<FunctionBuilder>) xpTerm ->
-            match maybeError with 
-            | Some _err -> maybeError, accSelectors, accBuilders
-            | None ->
-                match xpTerm with
-                | XPTerm.Builder builder ->
-                    None, accSelectors, builder :: accBuilders
-                | XPTerm.Value jpTerm ->
-                    match applyTerm (accSelectors, accBuilders, jpTerm) with
-                    | Ok (nodeTransformStack, builderStack) ->
-                        (None, nodeTransformStack, builderStack)
-                    | Error err ->
-                        (Some err, accSelectors, accBuilders)
+        let (status, transformStack, builders) =
+            xpTerms |>
+            List.fold(fun (maybeError:option<string>, accSelectors:NodeTansformStack, accBuilders:list<FunctionBuilder>) xpTerm ->
+                match maybeError with 
+                | Some _err -> maybeError, accSelectors, accBuilders
+                | None ->
+                    match xpTerm with
+                    | XPTerm.Builder builder ->
+                        None, accSelectors, builder :: accBuilders
+                    | XPTerm.Value jpTerm ->
+                        match applyTerm (accSelectors, accBuilders, jpTerm) with
+                        | Ok (nodeTransformStack, builderStack) ->
+                            (None, nodeTransformStack, builderStack)
+                        | Error err ->
+                            (Some err, accSelectors, accBuilders)
 
-            // acc.applyArg(i)
-        )(None, [],[])
+                // acc.applyArg(i)
+            )(None, [],[])
+        
+        match status with 
+        | Some err -> Error err
+        |None -> 
+            match builders.Length with 
+            | Eq 0 ->
+                Ok transformStack
+            | _ -> Error "builders left over"
 
 
     let gg = compileXPathFromTerms(xpTerms)

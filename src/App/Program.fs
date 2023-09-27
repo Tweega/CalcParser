@@ -2,6 +2,7 @@
 printfn "Hello from F#"
 
 open Parser.CalcParser
+open Parser.JutzParser
 
 // let simple = testParseExpression("1 + 2")
 // let hh = simple([123;321])
@@ -22,12 +23,18 @@ let expr3 = "3 + 'cdt158' / 'SinusoidU'"
 
 // let s = "tagTot('CDT158') + tagAvg('Sinusoid', " + quote("*-1d") + ", " + quote("*") + ")"
 let s = "'CDT158' / 'Sinusoid' * 100"
-let yy = Parser.CalcParser.parseExpression(s)
+//--------------------
+// let yy = Parser.CalcParser.parseExpression(s)
 
-match parseExpression(s) with 
-| Ok( t, _dt)  -> 
-    // let hh = Parser.CalcParser.expressionFromTerm(t)
-    let hh = Parser.CalcParser.AFAnalysisFromTerm(t)
-    printfn "%s" hh
-| Error e ->
-    printfn "%s" e
+// match parseExpression(s) with 
+// | Ok( t, _dt)  -> 
+//     // let hh = Parser.CalcParser.expressionFromTerm(t)
+//     let hh = Parser.CalcParser.AFAnalysisFromTerm(t)
+//     printfn "%s" hh
+// | Error e ->
+//     printfn "%s" e
+//-----------------------------
+
+let hh = Parser.JutzParser.testCompile()
+printfn "%A" hh
+ignore <| System.Console.ReadLine()
