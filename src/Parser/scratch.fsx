@@ -98,6 +98,33 @@
     | Axis
     | NodeSelection
 
+
+    [<RequireQualifiedAccessAttribute>]
+    type TermKey =
+    | Axis of Axis
+    | TermType of TermType
+
+    type INode =
+        abstract getElementNodes : unit -> list<INode>
+        abstract getAttributeNodes : unit -> list<INode>
+        // abstract getAttributes : unit -> list<IAttribute>
+        abstract getAttribute : string -> option<IAttribute>
+        // abstract getNodes : NodeType -> list<INode>
+        abstract getParent : unit -> INode
+        abstract getName : unit -> string
+        abstract getNodeType: unit -> NodeType
+        // abstract getLinkedNodes: unit -> list<INode>
+        // abstract getCategories: unit -> list<string>
+        
+    and IAttribute =
+        inherit INode
+        abstract getValue: unit -> string
+        abstract getDataType: unit -> DataType
+        
+    and IAttributeList =
+        abstract map : ('T -> 'U) * 'T -> list<'U>
+        // abstract bind : ('T -> list<'U>) * 'T -> list<'U>
+
     // we could add starting position in the original parse string to indicate where failure is tk
     [<RequireQualifiedAccessAttribute>]
     type JPTerm =
@@ -108,17 +135,23 @@
     | Filter of Filter
     | Function of Function
     | BinaryComparison of BinaryComparison
+    | Selector of (list<INode> -> list<INode>)
     with
-        static member getTermType(term:JPTerm) : TermType =
-            match term with
+        member this.getMainType() : TermType =
+            match this with
             | JPTerm.Axis _ -> TermType.Axis
             | _ -> TermType.NodeSelection
-        static member getInputs(term:JPTerm) : list<TermType> =
-            match term with
+        member this.getTermKey() =
+            match this with
+            | JPTerm.Axis axis -> 
+                TermKey.Axis axis
+            | _ -> TermKey.TermType TermType.NodeSelection
+        member this.getInputs() : list<TermType> =
+            match this with
             | JPTerm.Axis _ -> [TermType.NodeSelection]
             | JPTerm.NodeSelection _ -> []
             | _ -> []
-
+        
 
     type TerminationReason =
     | Failure of string
@@ -152,27 +185,6 @@
     and RequestResponse = (ParseStatus * ParseRequest) 
 
 
-
-    type INode =
-        abstract getElementNodes : unit -> list<INode>
-        abstract getAttributeNodes : unit -> list<INode>
-        // abstract getAttributes : unit -> list<IAttribute>
-        abstract getAttribute : string -> option<IAttribute>
-        // abstract getNodes : NodeType -> list<INode>
-        abstract getParent : unit -> INode
-        abstract getName : unit -> string
-        abstract getNodeType: unit -> NodeType
-        // abstract getLinkedNodes: unit -> list<INode>
-        // abstract getCategories: unit -> list<string>
-        
-    and IAttribute =
-        inherit INode
-        abstract getValue: unit -> string
-        abstract getDataType: unit -> DataType
-        
-    and IAttributeList =
-        abstract map : ('T -> 'U) * 'T -> list<'U>
-        // abstract bind : ('T -> list<'U>) * 'T -> list<'U>
 
 
     // some axes identify nodes already such as parent and . so we don't need a NodeSelection
@@ -1148,57 +1160,56 @@
     // a function places on the stack a cheeseboard. when this is full it is added to accumulator of NodeList->NodeList
     // which will be composed together
 
-    type ArgCollection= {
-        InputTypes: list<TermType>
-        Inputs: list<JPTerm>
-        Arity: int
+        
+    type ArgError = option<string>
+    type XPValue = {
+        JPTerm: JPTerm;
     }
 
-    // Type abbreviations cannot have augmentations (member functions) - hence wrapper for result
-    type ArgApplicationResult = {
-        JValue: Result<ArgCollection * bool, string>
-    }
+    type FunctionBuilder = 
+        {
+            JPTerm: JPTerm;
+            InputTypes: list<TermType>;
+            Inputs: list<JPTerm>;
+            Arity: int;
+            MaybeError: option<string>;
+            MakeFunction: list<JPTerm> -> (list<INode> -> list<INode>)
+        } with
+        
+        member this.getArity() = this.Arity;
+        member this.applyArg(term:JPTerm) =
+            match this.MaybeError with
+            | None ->
+                match this.InputTypes with
+                | [] -> 
+                    let msg = sprintf "No values expected when adding term"
+                    Error msg
+                | inType :: t -> 
+                    
+                    let termType = term.getMainType()
+                    match termType with
+                        | Eq inType ->
+                            Ok ({this with Inputs = term :: this.Inputs; InputTypes = t}, t.Length)
+                        | _ ->
+                            let msg = sprintf "Type mismatch: %A does not match %A" inType termType
+                            Error msg
+            | Some err -> Error err
 
-    with 
-        static member lift(argCollection:ArgCollection) : ArgApplicationResult = {JValue = Ok (argCollection, false)} 
-        member this.run() =
-            this.JValue 
-        member this.arity = this.Arity;
-        member this.addTerm(term:JPTerm) =
-            let gg = 
-                match this.run() with
-                | Ok (argCollection, _b) ->
-                    match argCollection.InputTypes with
-                    | [] -> Error "No values expected when adding term" 
-                    | inType :: t -> 
-                        let isLast =
-                            match t with
-                            | [] ->  true
-                            | _ -> false
-                        let termType = JPTerm.getTermType(term)
-                        match termType with
-                            | Eq inType ->
-                                Ok ({argCollection with Inputs = term :: argCollection.Inputs; InputTypes = t}, isLast)
-                            | _ ->
-                                let msg = sprintf "Type mismatch: %A does not match %A" inType termType
-                                Error msg
-                | err -> err
-            {JValue = gg}
         member this.getInputs() =
-            match this.JValue with
-                | Ok (argCollection, _b) ->
-                    argCollection.Inputs |> List.rev
-                | _ -> []
-                
+            this.Inputs |> List.rev
 
-        static member bind(afb: ArgCollection -> ArgApplicationResult)({JValue = jvRes}:ArgApplicationResult): ArgApplicationResult = 
-            match jvRes with
-            | Ok (a, _b) -> afb(a)
-            | _  -> {JValue = jvRes}
-            
+        
+        member this.makeFunction() =
+            this.Inputs |> this.MakeFunction
 
-    type XPathStack = list<JPTerm>
-    type NodeTansformStack = list<INode> -> list<INode>
+
+    [<RequireQualifiedAccessAttribute>]
+    type XPTerm = 
+    | Value of JPTerm
+    | Builder of FunctionBuilder
+
+    type XPathStack = list<XPTerm>
+    type NodeTansformStack = list<list<INode> -> list<INode>>
     
     // a wrapper  function so that all axis functions get passed NodeSelection though not  all axes need node type
     let ff(g:NodeName -> list<INode> -> list<INode>) =
@@ -1206,8 +1217,7 @@
         fun (nodeSelection:NodeSelection) ->
             g nodeSelection.NodeName
                         
-    let argCollection = [JPTerm.Axis Axis.Self; JPTerm.NodeSelection {NodeName = NodeName.NodeName "pump"; NodeType = NodeType.Element};]
-
+    
     let axisMapList =
         [
             (Axis.Self, (ff getSelf))
@@ -1219,109 +1229,116 @@
             (Axis.DescendantOrSelf, ff getDescendants)
         ]
 
-    let axisArgs: ArgCollection = {
-        InputTypes = [TermType.Axis; TermType.NodeSelection]
-        Inputs = []
+    let noOp = fun iNodes -> iNodes
+    //This defines the arguments a function is expecting -for Axis child, just a node selection
+    let childAxisBuilder: FunctionBuilder = {
+        JPTerm = JPTerm.Axis Axis.Child;
+        InputTypes = [TermType.NodeSelection];
+        Inputs = [];
+        Arity = 1;
+        MaybeError = None;
+        MakeFunction = fun(inputs) ->
+            // inputs will already have been validated via applyArg
+            match inputs with
+            | jpTerm :: [] ->
+                match jpTerm with 
+                | JPTerm.NodeSelection nodeSelection ->
+                    let f = getNodes nodeSelection
+                    fun iNodes ->
+                        f iNodes
+                | otherType -> 
+                    let msg  = sprintf "Arg error. Expected NodeSelection,  got %A" otherType
+                    printfn "%s" msg
+                    noOp
+            | _ -> 
+                let msg = sprintf "Should not see this.  Error: expected 1 inmput, got %d" inputs.Length
+                printfn "%s" msg
+                noOp        
     }
-    
-    let argApplicationResult' = 
-        argCollection |>
-        List.fold(fun (acc:ArgApplicationResult) i ->
-            acc.addTerm(i)
-        ) {JValue = Ok ({InputTypes = [TermType.Axis; TermType.NodeSelection]; Inputs=[]}, true)}
-    
-    let inputs = argApplicationResult'.getInputs()
+    let builderMap:Map<TermKey, XPTerm> = 
+        [
+            (TermKey.Axis Axis.Child, XPTerm.Builder childAxisBuilder)
+            (TermKey.TermType TermType.NodeSelection, XPTerm.Builder childAxisBuilder)
+        ] 
+        |> Map.ofList
 
-    
+
+
+    let jpTerms' = [JPTerm.Axis Axis.Self; JPTerm.NodeSelection {NodeName = NodeName.NodeName "pump"; NodeType = NodeType.Element};]
+    let xpTerms = 
+        let (xpTerms, status') =
+            jpTerms' |>
+            List.fold(fun  (acc: list<XPTerm>, status:option<string>) i ->
+                match status with 
+                | Some _err -> (acc, status)
+                | None -> 
+                    let  key = i.getTermKey()
+                    match builderMap with
+                    | Exists key xpTerm ->
+                        xpTerm :: acc, None
+                    | _ -> 
+                        let msg = sprintf "No XPTerm found in builder map for %A" key
+                        printfn "%s" msg
+                        (acc, Some msg)
+            )([],None)
+        match status' with 
+        | Some err ->
+            printfn "%s" err
+            []
+        | None -> xpTerms
+
+
+    let compileXPathFromTerms(xpTerms:list<XPTerm>) = 
+        let rec applyTerm(accSelectors':NodeTansformStack, accBuilders':list<FunctionBuilder>, jpTerm': JPTerm) =
+            match accBuilders' with
+            | h :: t ->
+                let applicationResult = h.applyArg(jpTerm')
+                match applicationResult with
+                | Ok (builder: FunctionBuilder, arity:int) ->
+                    match arity with
+                    | Eq 0 -> 
+                        let selector = builder.makeFunction()
+                        applyTerm(selector :: accSelectors', t, JPTerm.Selector selector)
+                    | _ ->
+                        // this builder still needs inputs
+                        Ok (accSelectors', builder :: t)
+                | Error err ->
+                    // (accSelectors', accBuilders')
+                    Error err
                     
+            | [] -> 
+                // no builder, see if we have a selector
+                match jpTerm' with
+                | JPTerm.Selector selector ->
+                    Ok (selector :: accSelectors', accBuilders')
+                | _ -> 
+                    let msg = sprintf "Top level term is not a selector: %A" jpTerm'
+                    Error msg
 
 
-    // if i pass in a term to function container it has a set of inputs it needs
-    // it collects n terms, when it has them it applies them and the function becomes a value (nodelist?)
+        xpTerms |>
+        List.fold(fun (maybeError:option<string>, accSelectors:NodeTansformStack, accBuilders:list<FunctionBuilder>) xpTerm ->
+            match maybeError with 
+            | Some _err -> maybeError, accSelectors, accBuilders
+            | None ->
+                match xpTerm with
+                | XPTerm.Builder builder ->
+                    None, accSelectors, builder :: accBuilders
+                | XPTerm.Value jpTerm ->
+                    match applyTerm (accSelectors, accBuilders, jpTerm) with
+                    | Ok (nodeTransformStack, builderStack) ->
+                        (None, nodeTransformStack, builderStack)
+                    | Error err ->
+                        (Some err, accSelectors, accBuilders)
+
+            // acc.applyArg(i)
+        )(None, [],[])
 
 
-
-    // the issue we will have here is that successive where clauses share the same context
-    //  we had something like this with d3 chart in ElmishD3
-    // should be alright - it is one filter applied after another
-    // ./pump[./@pressure > 1][./@flow > 3]
-
-    // if I have a list<JPTerm> that should map into a function
-    // an axis function expects a nodeName
-
-
-    let doParse(parser, runMap: Map<ParseStatus, string -> Result<option<list<JPTerm>> * string,string>> , xPath: string) =
-
-        // this function is invoked by run
-        let rec parseXPathTail (request: Request): RequestResponse =
-            match request with 
-            | Request.Next ->
-                // run function to get next terms
-                    // parse next terms
-                    let requestResponse = run request
-                    let (terms', status') =
-                        match termsResult with
-                        | Ok (remaining, terms) ->
-                            let newStatus = 
-                                match remaining with 
-                                | Eq "" ->
-                                    ParseStatus.Complete
-                                | _-> 
-                                    ParseStatus.Parsing remaining
-                            (terms, newStatus)
-                        | Error msg ->
-                            printfn "Error: %s" msg
-
-                            ([], ParseStatus.Terminated)
-                    let parser' = {parser with ParseStatus = status'; Terms = terms' :: parser.Terms}
-                    (parser', NextRequest.NextRequest (parseXPathTail parser'))
-
-                | ParseStatus.Terminated ->
-                    (parser, NextRequest.NextRequest (fun _r -> (parser, NextRequest.Terminated)))
-
-            | Request.Stop ->
-                // early termination
-                parser.Teardown()
-                let parser' = {parser with ParseStatus = ParseStatus.Terminated}
-
-                (parser', NextRequest.NextRequest (fun _r -> (parser', NextRequest.Terminated)))
-
-
-        (parser, NextRequest.NextRequest (parseXPathTail parser))
+    let gg = compileXPathFromTerms(xpTerms)
         
-    ///contexts:
-    ///  node selection : Axis or where
-    /// Axis : Node selection
-    /// where: Recipe Funcion or Recipe BinOp
-    ///     Recipe Function : functionName then JPTerm (node selection or constant) then JPTerm (node selection or constant)
-    ///     Recipe BinOp: JPTerm (node selection or constant) then BinOp then JPTerm (node selection or constant)
+    // let inputs = argApplicationResult'.getInputs()
 
-    let  initialParser = {
-            ParseStatus = ParseStatus.Parsing strToParse;
-            Run = parseAndHandleAxes
-            Teardown = fun () -> ();
-            Terms = [];
-            XPath = strToParse
-        }
-        
-    let parseXPath (strToParse: string) =
-        
-        let mutable linesRead = 0
-        let mutable nextRequest: RequestResponse = doParse (initialParser, strToParse) 
-        let mutable parser = initialParser
-        let (parser', _nr) = nextRequest
-        parser <- parser'
-        while true   do            
-            nextRequest <- run nextRequest
-            let (nextParser, _nr) = nextRequest
-            parser <- nextParser
-            
-        printfn "finished: %d lines read" linesRead
-    
-    
-
-    
-    
     // let parseConstant = (parseAndHandleString) >=> parseAndHandleNumber
     
     let rec parseExpression(expr: string) =
