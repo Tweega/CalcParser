@@ -1,6 +1,6 @@
 ﻿namespace Parser
 
-module JutzParser =
+module rec JutzParser =
     open ParserTypes
     open System.Text.RegularExpressions
 
@@ -61,6 +61,7 @@ module JutzParser =
     | NodeName of string
     | Any
 
+    [<RequireQualifiedAccessAttribute>]
      type NodeSelection = {
         NodeName: NodeName;
         NodeType: NodeType;
@@ -71,43 +72,7 @@ module JutzParser =
         Value: string;
     }
 
-    type BinaryComparison = {
-        LHS: FilterExpression;
-        RHS: FilterExpression;
-        ComparisonOp: ComparisonOp;
-    } 
-    and Filter = 
-    | BinaryComparison of BinaryComparison
-    | Function of Function
     
-    and Function =
-    | Function of string * FilterExpression * FilterExpression
-
-    and FilterExpression = 
-    | Expression of Expression //nodeList
-    | Constant of ConstantValue
-   
-    and Expression =  //expression  evaluates to a node list
-        | NodeListExpression of Axis * list<Filter> * JutzPath * NodeSelection //Axis, Filters, Continuation, NodeSelection;
-
-    and JutzPath =
-    | Expression
-    | Empty
-
-    //how do these tie in to the underlying types? tk  
-    [<RequireQualifiedAccessAttribute>]
-    type TermType =
-    | Axis
-    | NodeSelection
-    | FilterExpression
-    | BinaryComparison
-
-
-    [<RequireQualifiedAccessAttribute>]
-    type TermKey =
-    | Axis of Axis
-    | TermType of TermType
-
     type INode =
         abstract getElementNodes : unit -> list<INode>
         abstract getAttributeNodes : unit -> list<INode>
@@ -121,11 +86,11 @@ module JutzParser =
         // abstract getCategories: unit -> list<string>
         abstract getValue: unit -> string
         
-    and IAttribute =
+    type IAttribute =
         inherit INode
         abstract getDataType: unit -> DataType
         
-    and IAttributeList =
+    type IAttributeList =
         abstract map : ('T -> 'U) * 'T -> list<'U>
         // abstract bind : ('T -> list<'U>) * 'T -> list<'U>
 
@@ -138,7 +103,8 @@ module JutzParser =
     | NodeName of NodeName  //temporary
     | Filter of Filter
     | Function of Function
-    | BinaryComparison of BinaryComparison
+    // | BinaryComparison of BinaryComparison
+    | ComparisonOp of ComparisonOp
     | Selector of (list<INode> -> list<INode>)
     with
         member this.getTermType() : TermType =
@@ -155,8 +121,92 @@ module JutzParser =
             | JPTerm.Axis _ -> [TermType.NodeSelection]
             | JPTerm.NodeSelection _ -> []
             | _ -> []
-        
+    
+    [<RequireQualifiedAccessAttribute>]
+    type BinaryComparison = {
+        LHS: FilterExpression;
+        RHS: FilterExpression;
+        ComparisonOp: ComparisonOp;
+    } 
 
+    [<RequireQualifiedAccessAttribute>]
+    type Filter = 
+    | BinaryComparison of BinaryComparison
+    | Function of Function
+    
+    [<RequireQualifiedAccessAttribute>]
+    type Function =
+    | Function of string * FilterExpression * FilterExpression
+
+    [<RequireQualifiedAccessAttribute>]
+    type FilterExpression = 
+    | Expression of list<XPTerm> //nodeList
+    | Constant of ConstantValue
+   
+    [<RequireQualifiedAccessAttribute>]
+    type JutzPath =
+    | Expression
+    | Empty
+
+    //how do these tie in to the underlying types? tk  
+    [<RequireQualifiedAccessAttribute>]
+    type TermType =
+    | Axis
+    | NodeSelection
+    | FilterExpression
+    | BinaryComparison
+
+    [<RequireQualifiedAccessAttribute>]
+    type TermKey =
+    | Axis of Axis
+    | TermType of TermType
+
+
+    type FunctionBuilder = 
+        {
+            TermType: TermType;  //for labelling purposes only
+            InputTypes: list<TermType>;
+            Inputs: list<JPTerm>;
+            Arity: int;
+            MaybeError: option<string>;
+            MakeFunction: list<JPTerm> -> (list<INode> -> list<INode>)
+        } with
+        
+        member this.getArity() = this.Arity;
+        member this.applyArg(term:JPTerm) =
+            match this.MaybeError with
+            | None ->
+                match this.InputTypes with
+                | [] -> 
+                    let msg = sprintf "No values expected when adding term"
+                    Error msg
+                | inType :: t -> 
+                    
+                    let termType = term.getTermType()
+                    match termType with
+                        | Eq inType ->
+                            Ok ({this with Inputs = term :: this.Inputs; InputTypes = t}, t.Length)
+                        | _ ->
+                            let msg = sprintf "Type mismatch: %A does not match %A" inType termType
+                            Error msg
+            | Some err -> Error err
+
+        member this.getInputs() =
+            this.Inputs |> List.rev
+
+        
+        member this.makeFunction() =
+            this.Inputs |> this.MakeFunction
+
+    [<RequireQualifiedAccessAttribute>]
+    type XPTerm = 
+    | XPValue of JPTerm
+    | Builder of FunctionBuilder
+
+    type SelectorStack = list<list<INode> -> list<INode>>
+    type XPathStack = list<XPTerm>
+
+    [<RequireQualifiedAccessAttribute>]
     type TerminationReason =
     | Failure of string
     | Success of list<JPTerm>
@@ -186,7 +236,7 @@ module JutzParser =
         | ParseNext of (Request -> RequestResponse)
         | CancelParse
         
-    and RequestResponse = (ParseStatus * ParseRequest) 
+    type RequestResponse = (ParseStatus * ParseRequest) 
 
 
 
@@ -581,6 +631,14 @@ module JutzParser =
             ParseOK (maybeOperator, remaining)
         | Error msg -> ParseError msg
 
+
+    let rec anyOf(tests: list<unit -> bool>) =
+        match tests with
+        | h :: t ->
+            match h() with
+            |true -> true
+            | false -> anyOf(t)
+        | [] -> false
 //----------
     // we need handlers to return a consistent data type representing the document / data structure we are building
     // we are creating a tree, alhough we could at this point simply gather terms as we do when parsing function expressions
@@ -839,7 +897,7 @@ module JutzParser =
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
-                let term = ({DataType = DataType.String; Value = str}) |> (Constant >> JPTerm.FilterExpression)
+                let term = ({DataType = DataType.String; Value = str}) |> (FilterExpression.Constant >> JPTerm.FilterExpression)
                 
                 Ok (Some [term], remaining)
             | None -> Ok (None, input)
@@ -857,7 +915,7 @@ module JutzParser =
                     | true -> DataType.Float
                     | false -> DataType.Integer
 
-                let term = ({DataType = dt; Value = str}) |> (Constant >> JPTerm.FilterExpression)
+                let term = ({DataType = dt; Value = str}) |> (FilterExpression.Constant >> JPTerm.FilterExpression)
                 Ok (Some [term], remaining)
             | None -> Ok (None, input)
             
@@ -970,29 +1028,69 @@ module JutzParser =
    
    
     
-    let inline eq<'T when 'T: equality>(t1:'T, t2:'T) = 
+    let inline eq<'T when 'T: equality>(t1:'T) (t2:'T) = 
         t1 = t2
-    let inline gt<'T when ^T: comparison>(t1:'T, t2:'T) = 
+    let inline gt<'T when ^T: comparison>(t1:'T) (t2:'T) = 
         t1 > t2
-    let inline lt<'T when ^T: comparison>(t1:'T, t2:'T) = 
+    let inline lt<'T when ^T: comparison>(t1:'T) (t2:'T) = 
         t1 < t2
-    let inline gte<'T when ^T: comparison>(t1:'T, t2:'T) = 
+    let inline gte<'T when ^T: comparison>(t1:'T) (t2:'T) = 
         t1 >= t2
-    let inline lte<'T when ^T: comparison>(t1:'T, t2:'T) = 
+    let inline lte<'T when ^T: comparison>(t1:'T) (t2:'T) = 
         t1 <= t2
 
-    let  eqInt(iNode:IAttribute, i:int) =
-        match parseInt32(iNode.getValue()) with
-        | Some i' -> eq(i', i)
-        | _ -> false
+    let compareInt(op)(lhs:INode)(rhs:INode) =
+        let comparator = 
+            match op with
+            | ComparisonOp.EQ -> eq
+            | ComparisonOp.GT -> gt
+            | ComparisonOp.LT -> lt
+            | ComparisonOp.GTE -> gte
+            | ComparisonOp.LTE -> lte
+        
+        match (
+            parseInt32(lhs.getValue()) 
+            |> Option.bind (fun v1 -> 
+                parseInt32(rhs.getValue()) 
+                |> Option.bind(fun v2 -> 
+                    Some(comparator v1 v2)
+                )
+            )
+        ) with
+        | Some b -> b
+        | None -> false
 
-    let  eqFloat(iNode:IAttribute, f:float) =
-        match parseFloat64(iNode.getValue()) with
-        | Some f' -> eq(f', f)
-        | _ -> false
-    
-    let  eqString(iNode:IAttribute, s:string) =
-        eq(iNode.getValue(), s)
+    let compareFloat(op)(lhs:INode)(rhs:INode) =
+        let comparator = 
+            match op with
+            | ComparisonOp.EQ -> eq
+            | ComparisonOp.GT -> gt
+            | ComparisonOp.LT -> lt
+            | ComparisonOp.GTE -> gte
+            | ComparisonOp.LTE -> lte
+        
+        match (
+            parseFloat64(lhs.getValue()) 
+            |> Option.bind (fun v1 -> 
+                parseFloat64(rhs.getValue()) 
+                |> Option.bind(fun v2 -> 
+                    Some(comparator v1 v2)
+                )
+            )
+        ) with
+        | Some b -> b
+        | None -> false
+
+    let compareString(op)(lhs:INode)(rhs:INode) =
+        let comparator = 
+            match op with
+            | ComparisonOp.EQ -> eq
+            | ComparisonOp.GT -> gt
+            | ComparisonOp.LT -> lt
+            | ComparisonOp.GTE -> gte
+            | ComparisonOp.LTE -> lte
+        
+        comparator (lhs.getValue())(rhs.getValue())
 
     let filterByName(nodeName:NodeName) (iNodes:list<INode>) =
         iNodes |>
@@ -1174,55 +1272,6 @@ module JutzParser =
     // which will be composed together
 
         
-    type ArgError = option<string>
-    type XPValue = {
-        JPTerm: JPTerm;
-    }
-
-    type FunctionBuilder = 
-        {
-            JPTerm: JPTerm;
-            InputTypes: list<TermType>;
-            Inputs: list<JPTerm>;
-            Arity: int;
-            MaybeError: option<string>;
-            MakeFunction: list<JPTerm> -> (list<INode> -> list<INode>)
-        } with
-        
-        member this.getArity() = this.Arity;
-        member this.applyArg(term:JPTerm) =
-            match this.MaybeError with
-            | None ->
-                match this.InputTypes with
-                | [] -> 
-                    let msg = sprintf "No values expected when adding term"
-                    Error msg
-                | inType :: t -> 
-                    
-                    let termType = term.getTermType()
-                    match termType with
-                        | Eq inType ->
-                            Ok ({this with Inputs = term :: this.Inputs; InputTypes = t}, t.Length)
-                        | _ ->
-                            let msg = sprintf "Type mismatch: %A does not match %A" inType termType
-                            Error msg
-            | Some err -> Error err
-
-        member this.getInputs() =
-            this.Inputs |> List.rev
-
-        
-        member this.makeFunction() =
-            this.Inputs |> this.MakeFunction
-
-
-    [<RequireQualifiedAccessAttribute>]
-    type XPTerm = 
-    | Value of JPTerm
-    | Builder of FunctionBuilder
-
-    type XPathStack = list<XPTerm>
-    type SelectorStack = list<list<INode> -> list<INode>>
     
     // a wrapper  function so that all axis functions get passed NodeSelection though not  all axes need node type
     let ff(g:NodeName -> list<INode> -> list<INode>) =
@@ -1230,108 +1279,7 @@ module JutzParser =
         fun (nodeSelection:NodeSelection) ->
             g nodeSelection.NodeName
                         
-    let noOp = fun iNodes -> iNodes
     //This defines the arguments a function is expecting -for Axis child, just a node selection
-    
-    let makeAxisBuilder(axis:Axis, selector:NodeSelection -> list<INode>-> list<INode>) : FunctionBuilder =
-        {
-            JPTerm = JPTerm.Axis axis;
-            InputTypes = [TermType.NodeSelection];
-            Inputs = [];
-            Arity = 1;
-            MaybeError = None;
-            MakeFunction = fun(inputs) ->
-                // inputs will already have been validated via applyArg
-                match inputs with
-                | jpTerm :: [] ->
-                    match jpTerm with 
-                    | JPTerm.NodeSelection nodeSelection ->
-                        let f = selector nodeSelection
-                        fun iNodes ->
-                            f iNodes
-                    | otherType -> 
-                        let msg  = sprintf "Arg error. Expected NodeSelection,  got %A" otherType
-                        printfn "%s" msg
-                        noOp
-                | _ -> 
-                    let msg = sprintf "Should not see this.  Error: expected 1 inmput, got %d" inputs.Length
-                    printfn "%s" msg
-                    noOp        
-        }
-
-    
-    let makeFilterBuilder(filter:Filter) : FunctionBuilder =
-        {
-            JPTerm = JPTerm.Filter filter;
-            InputTypes = [TermType.FilterExpression; TermType.BinaryComparison; TermType.FilterExpression];
-            Inputs = [];
-            Arity = 3;
-            MaybeError = None;
-            MakeFunction = fun(inputs) ->
-                // inputs will already have been validated via applyArg
-                match inputs with
-                | lhsTerm :: binOp :: rhsTerm :: [] ->
-                    match (lhsTerm, binOp, rhsTerm) with 
-                    | (JPTerm.FilterExpression lhsExpr, JPTerm.FilterExpression k, JPTerm.FilterExpression rhsExpr) ->
-                        match lhsExpr with
-                        | FilterExpression.Expression expr ->
-                            // we want to reduce expr to a selector on which we will call getValue
-                        | FilterExpression.Constant c -> 
-                        fun iNodes ->
-                            f iNodes
-                    | otherType -> 
-                        let msg  = sprintf "Arg error. Expected (JPTerm.FilterExpression lhsExpr, JPTerm.FilterExpression k, JPTerm.FilterExpression rhsExpr),  got %A" otherType
-                        printfn "%s" msg
-                        noOp
-                | _ -> 
-                    let msg = sprintf "Should not see this.  Error: expected 1 inmput, got %d" inputs.Length
-                    printfn "%s" msg
-                    noOp        
-        }
-    let builderMap:Map<TermKey, FunctionBuilder> = 
-        [
-            (TermKey.Axis Axis.Child, makeAxisBuilder (Axis.Child, getNodes))
-            (TermKey.Axis Axis.Parent, makeAxisBuilder (Axis.Parent, ff getParent))
-            (TermKey.Axis Axis.Ancestor, makeAxisBuilder (Axis.Ancestor, ff getAncestors))
-            (TermKey.Axis Axis.AncestorOrSelf, makeAxisBuilder (Axis.AncestorOrSelf, ff getAncestorsOrSelf))
-            (TermKey.Axis Axis.Descendant, makeAxisBuilder (Axis.Descendant, ff getDescendants))
-            (TermKey.Axis Axis.DescendantOrSelf, makeAxisBuilder (Axis.DescendantOrSelf, ff getDescendantsOrSelf))
-            (TermKey.Axis Axis.Self, makeAxisBuilder (Axis.Self, ff getSelf))
-            // (TermKey.TermType TermType.NodeSelection, XPTerm.Value )
-        ] 
-        |> Map.ofList
-
-
-
-    let jpTerms' = [
-        JPTerm.Axis Axis.Child; 
-        JPTerm.NodeSelection {NodeName = NodeName.NodeName "station"; NodeType = NodeType.Element};
-        JPTerm.Axis Axis.Child; 
-        JPTerm.NodeSelection {NodeName = NodeName.NodeName "pump"; NodeType = NodeType.Element};
-        JPTerm.Axis Axis.Descendant; 
-        JPTerm.NodeSelection {NodeName = NodeName.NodeName "compressor"; NodeType = NodeType.Element};
-    ]
-    let xpTerms = 
-        let (terms, status') =
-            jpTerms' |>
-            List.fold(fun  (acc: list<XPTerm>, status:option<string>) jpTerm ->
-                match status with 
-                | Some _err -> (acc, status)
-                | None -> 
-                    let  key = jpTerm.getTermKey()
-                    match builderMap with
-                    | Exists key functionBuilder ->
-                        (XPTerm.Builder functionBuilder) :: acc, None
-                    | _ -> 
-                        // assume that this JPTerm is a value - find away to check this? tk
-                        (XPTerm.Value jpTerm) :: acc, None
-            )([],None)
-        match status' with 
-        | Some err ->
-            printfn "Error: %s" err
-            []
-        | None -> terms
-        |> List.rev
 
     type Selector = list<INode> -> list<INode>
 
@@ -1379,7 +1327,7 @@ module JutzParser =
                     match xpTerm with
                     | XPTerm.Builder builder ->
                         None, accSelectors, builder :: accBuilders
-                    | XPTerm.Value jpTerm ->
+                    | XPTerm.XPValue jpTerm ->
                         match applyTerm (accSelectors, accBuilders, jpTerm) with
                         | Ok (selectorStack, builderStack) ->
                             (None, selectorStack, builderStack)
@@ -1402,6 +1350,168 @@ module JutzParser =
                 Ok selector
             | _ -> Error "builders left over"
 
+    
+    let makeAxisBuilder(axis:Axis, selector:NodeSelection -> list<INode>-> list<INode>) : FunctionBuilder =
+        {
+            TermType = TermType.Axis;
+            InputTypes = [TermType.NodeSelection];
+            Inputs = [];
+            Arity = 1;
+            MaybeError = None;
+            MakeFunction = fun(inputs) ->
+                // inputs will already have been validated via applyArg
+                match inputs with
+                | jpTerm :: [] ->
+                    match jpTerm with 
+                    | JPTerm.NodeSelection nodeSelection ->
+                        let f = selector nodeSelection
+                        fun iNodes ->
+                            f iNodes
+                    | otherType -> 
+                        let msg  = sprintf "Arg error. Expected NodeSelection,  got %A" otherType
+                        printfn "%s" msg
+                        id
+                | _ -> 
+                    let msg = sprintf "Should not see this.  Error: expected 1 inmput, got %d" inputs.Length
+                    printfn "%s" msg
+                    id        
+        }
+
+    let delayed(f: 'T-> 'U) =
+        fun(t: 'T) -> 
+            fun() ->
+                f t
+    
+    let makeComparisonBuilder() : FunctionBuilder =
+        {
+            TermType = TermType.BinaryComparison;
+            InputTypes = [TermType.FilterExpression; TermType.BinaryComparison; TermType.FilterExpression];
+            Inputs = [];
+            Arity = 3;
+            MaybeError = None;
+            MakeFunction = fun(inputs) ->
+                // inputs will already have been validated via applyArg
+                match inputs with
+                | lhsTerm :: binOp :: rhsTerm :: [] ->
+                    match (lhsTerm, binOp, rhsTerm) with 
+                    | (JPTerm.FilterExpression lhsExpr, JPTerm.ComparisonOp op, JPTerm.FilterExpression rhsExpr) ->
+                        match lhsExpr with
+                        | FilterExpression.Expression expr ->
+                            // we want to reduce expr to a selector on which we will call getValue
+                            match compileXPathFromTerms(expr) with
+                            | Ok lhsSelector -> 
+                                match rhsExpr with
+                                | FilterExpression.Constant c -> 
+                                    id
+                                | FilterExpression.Expression expr ->
+                                    // we want to reduce expr to a selector on which we will call getValue
+                                    match compileXPathFromTerms(expr) with
+                                    | Ok rhsSelector ->
+
+                                        fun (iNodes:list<INode>) ->
+                                            let lhsNodes = iNodes |> lhsSelector
+                                            let rhsNodes = iNodes |> rhsSelector
+                                            let typedComparator = 
+                                                match lhsNodes with
+                                                | h :: _t  ->
+                                                    // assume that attribute types are consistent and match that of the first lhs attribute
+                                                    match h.getNodeType() with
+                                                    | NodeType.Element ->
+                                                        compareString op
+                                                    | NodeType.Attribute ->
+                                                        match tryUnbox<IAttribute> h with
+                                                        | Some iAttribute ->
+                                                        
+                                                            match iAttribute.getDataType() with
+                                                            | DataType.Float ->
+                                                                compareFloat op
+                                                            | DataType.Integer ->
+                                                                compareInt op
+                                                            | _ ->
+                                                                compareString op
+                                                        
+                                                        | None -> compareString op //default
+                                                |_ -> compareString op //lhs is empty so result will be empty too
+
+                                            // fun(lhs:list<INode>, rhs:list<INode>) ->
+                                            iNodes |>
+                                            List.filter(fun lhsNodex ->
+                                                let tests = 
+                                                    rhsNodes |>
+                                                    List.map(fun rhsNode ->
+                                                        (delayed (typedComparator lhsNodex)) rhsNode
+                                                    )
+                                                anyOf(tests)
+                                            )
+
+                                    | Error err ->
+                                        printfn "Error: %s" err
+                                        id
+
+
+                            | Error err ->
+                                printfn "Error: %s" err
+                                id
+
+
+                        | FilterExpression.Constant c -> 
+                        fun iNodes ->
+                            f iNodes
+                    | otherType -> 
+                        let msg  = sprintf "Arg error. Expected (JPTerm.FilterExpression lhsExpr, JPTerm.FilterExpression k, JPTerm.FilterExpression rhsExpr),  got %A" otherType
+                        printfn "%s" msg
+                        id
+                | _ -> 
+                    let msg = sprintf "Should not see this.  Error: expected 1 inmput, got %d" inputs.Length
+                    printfn "%s" msg
+                    id        
+        }
+    let builderMap:Map<TermKey, FunctionBuilder> = 
+        [
+            (TermKey.Axis Axis.Child, makeAxisBuilder (Axis.Child, getNodes))
+            (TermKey.Axis Axis.Parent, makeAxisBuilder (Axis.Parent, ff getParent))
+            (TermKey.Axis Axis.Ancestor, makeAxisBuilder (Axis.Ancestor, ff getAncestors))
+            (TermKey.Axis Axis.AncestorOrSelf, makeAxisBuilder (Axis.AncestorOrSelf, ff getAncestorsOrSelf))
+            (TermKey.Axis Axis.Descendant, makeAxisBuilder (Axis.Descendant, ff getDescendants))
+            (TermKey.Axis Axis.DescendantOrSelf, makeAxisBuilder (Axis.DescendantOrSelf, ff getDescendantsOrSelf))
+            (TermKey.Axis Axis.Self, makeAxisBuilder (Axis.Self, ff getSelf))
+            // (TermKey.TermType TermType.NodeSelection, XPTerm.Value )
+        ] 
+        |> Map.ofList
+
+
+
+    let jpTerms' = [
+        JPTerm.Axis Axis.Child; 
+        JPTerm.NodeSelection {NodeName = NodeName.NodeName "station"; NodeType = NodeType.Element};
+        JPTerm.Axis Axis.Child; 
+        JPTerm.NodeSelection {NodeName = NodeName.NodeName "pump"; NodeType = NodeType.Element};
+        JPTerm.Axis Axis.Descendant; 
+        JPTerm.NodeSelection {NodeName = NodeName.NodeName "compressor"; NodeType = NodeType.Element};
+    ]
+    let xpTerms = 
+        let (terms, status') =
+            jpTerms' |>
+            List.fold(fun  (acc: list<XPTerm>, status:option<string>) jpTerm ->
+                match status with 
+                | Some _err -> (acc, status)
+                | None -> 
+                    let  key = jpTerm.getTermKey()
+                    match builderMap with
+                    | Exists key functionBuilder ->
+                        (XPTerm.Builder functionBuilder) :: acc, None
+                    | _ -> 
+                        // assume that this JPTerm is a value - find away to check this? tk
+                        (XPTerm.XPValue jpTerm) :: acc, None
+            )([],None)
+        match status' with 
+        | Some err ->
+            printfn "Error: %s" err
+            []
+        | None -> terms
+        |> List.rev
+
+    
 
     let testCompile() =
         compileXPathFromTerms(xpTerms)
