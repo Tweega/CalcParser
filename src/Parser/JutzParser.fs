@@ -1293,7 +1293,7 @@ module JutzParser =
 
     let compileXPathFromTerms(xpTerms:list<XPTerm>) = 
         let rec applyTerm(accSelectors':NodeTransformStack, accBuilders':list<FunctionBuilder>, jpTerm': JPTerm) =
-            printfn "Applyin JPTerm: %A" jpTerm'
+            printfn "Applying JPTerm: %A" jpTerm'
             
             match accBuilders' with
             | h :: t ->
@@ -1303,7 +1303,7 @@ module JutzParser =
                     match arity with
                     | Eq 0 -> 
                         let selector = builder.makeFunction()
-                        applyTerm(selector :: accSelectors', t, JPTerm.Selector selector)
+                        applyTerm(accSelectors', t, JPTerm.Selector selector)
                     | _ ->
                         // this builder still needs inputs
                         Ok (accSelectors', builder :: t)
