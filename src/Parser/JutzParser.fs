@@ -81,7 +81,7 @@ module rec JutzParser =
         // abstract getAttributes : unit -> list<IAttribute>
         abstract getAttribute : string -> option<IAttribute>
         // abstract getNodes : NodeType -> list<INode>
-        abstract getParent : unit -> INode
+        abstract getParent : unit -> option<INode>
         abstract getName : unit -> string
         abstract getNodeType: unit -> NodeType
         // abstract getLinkedNodes: unit -> list<INode>
@@ -143,7 +143,7 @@ module rec JutzParser =
     [<RequireQualifiedAccessAttribute>]
     type FilterExpression = 
     | Expression of list<XPTerm> //nodeList
-    | Constant of ConstantValue
+    | ConstantValue of ConstantValue
    
     [<RequireQualifiedAccessAttribute>]
     type JutzPath =
@@ -899,7 +899,7 @@ module rec JutzParser =
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
-                let term = ({DataType = DataType.String; Value = str}) |> (FilterExpression.Constant >> JPTerm.FilterExpression)
+                let term = ({DataType = DataType.String; Value = str}) |> (FilterExpression.ConstantValue >> JPTerm.FilterExpression)
                 
                 Ok (Some [term], remaining)
             | None -> Ok (None, input)
@@ -917,7 +917,7 @@ module rec JutzParser =
                     | true -> DataType.Float
                     | false -> DataType.Integer
 
-                let term = ({DataType = dt; Value = str}) |> (FilterExpression.Constant >> JPTerm.FilterExpression)
+                let term = ({DataType = dt; Value = str}) |> (FilterExpression.ConstantValue >> JPTerm.FilterExpression)
                 Ok (Some [term], remaining)
             | None -> Ok (None, input)
             
@@ -1107,7 +1107,7 @@ module rec JutzParser =
             Name: string;
             AttributeMap: Map<string, IAttribute>
             Elements: list<INode>
-            Parent:INode;
+            Parent:option<INode>;
 
         }  
         interface INode with
@@ -1131,7 +1131,7 @@ module rec JutzParser =
         {
             Name: string;
             Value: string;
-            Parent: INode;
+            Parent: option<INode>;
             AttributeMap: Map<string, IAttribute>
             DataType:DataType;
         }  
@@ -1214,7 +1214,10 @@ module rec JutzParser =
     let getParent(nodeName: NodeName)(nodes: list<INode>) : list<INode> =
         nodes |>
         List.fold(fun acc iNode ->
-            let filteredNodes = [iNode.getParent()] |> filterByName nodeName
+            let filteredNodes = 
+                match iNode.getParent() with
+                | Some parent -> [parent] |> filterByName nodeName
+                |None -> []
             filteredNodes |>
             List.fold(fun acc' i' ->
                 i' :: acc'
@@ -1239,7 +1242,9 @@ module rec JutzParser =
                 
                 // add parent elements to list of nodes to be processed, ignoring head which is being assessed now.
                 let newProcessList = 
-                    h.getParent() :: t  
+                    match h.getParent() with
+                    | Some parent -> parent :: t  
+                    | None -> t
                 ancestors (newProcessList, newAcc)
         ancestors(nodes, [])
         
@@ -1273,6 +1278,15 @@ module rec JutzParser =
     // a function places on the stack a cheeseboard. when this is full it is added to accumulator of NodeList->NodeList
     // which will be composed together
 
+    let makeAttributeFromConstant(c:ConstantValue) =
+        //make an attribute node from constant
+        {
+            Name = "Constant";
+            Value = c.Value;
+            Parent = None;
+            AttributeMap  =  Map.empty
+            DataType= c.DataType;
+        }
         
     
     // a wrapper  function so that all axis functions get passed NodeSelection though not  all axes need node type
@@ -1397,85 +1411,88 @@ module rec JutzParser =
                 | lhsTerm :: binOp :: rhsTerm :: [] ->
                     match (lhsTerm, binOp, rhsTerm) with 
                     | (JPTerm.FilterExpression lhsExpr, JPTerm.ComparisonOp op, JPTerm.FilterExpression rhsExpr) ->
-                        match lhsExpr with
-                        | FilterExpression.Expression expr ->
-                            // we want to reduce expr to a selector on which we will call getValue
-                            match compileXPathFromTerms(expr) with
-                            | Ok lhsSelector -> 
-                                match rhsExpr with
-                                | FilterExpression.Constant c -> 
-                                    id
-                                | FilterExpression.Expression expr ->
-                                    // we want to reduce expr to a selector on which we will call getValue
-                                    // assuming for the moment that the context of all node searches is the current node, not root
-                                    // for a global search we would need a reader monad approach to pass that down the hierarchy
-                                    match compileXPathFromTerms(expr) with
-                                    | Ok rhsSelector ->
+                        let lRes = 
 
-                                        fun (iNodes:list<INode>) ->
-                                            
-                                            // fun(lhs:list<INode>, rhs:list<INode>) ->
-                                            iNodes |>
-                                            List.filter(fun iNode ->
-                                                //assuming for now that current node is always the root
-                                                let lhsNodes = [iNode] |> lhsSelector
-                                                let rhsNodes = [iNode] |> rhsSelector
+                            match lhsExpr with
+                            | FilterExpression.Expression expr ->
+                                // we want to reduce expr to a selector on which we will call getValue
+                                compileXPathFromTerms(expr)
+                            
+                            | FilterExpression.ConstantValue c -> 
+                                let iNode = makeAttributeFromConstant(c):> INode
+                                Ok (fun _iNodes -> [iNode])
+                        let rRes =
+                            match rhsExpr with
+                            | FilterExpression.Expression expr ->
+                                // we want to reduce expr to a selector on which we will call getValue
+                                compileXPathFromTerms(expr)
+                            
+                            | FilterExpression.ConstantValue c -> 
+                                let iNode = makeAttributeFromConstant(c):> INode
+                                Ok (fun iNodes -> [iNode])
+                            
+                        let jj = 
+                            lRes |> Result.bind(fun l ->
+                                rRes |> Result.bind(fun r ->
+                                    Ok (l,r)
+                                )
+                            )
+                        match jj with 
+                        | Error err -> 
+                            printfn "%s" err
+                            id
 
-                                                let typedComparator = 
-                                                    match lhsNodes with
-                                                    | h :: _t ->
-                                                        let nodeType = h.getNodeType()
-                                                        match nodeType with
-                                                        | NodeType.Element ->
-                                                            compareString
-                                                        | NodeType.Attribute ->
-                                                            match tryUnbox<IAttribute> h with
-                                                            | Some iAttribute ->
-                                                            
-                                                                match iAttribute.getDataType() with
-                                                                | DataType.Float ->
-                                                                    compareFloat
-                                                                | DataType.Integer ->
-                                                                    compareInt
-                                                                | _ ->
-                                                                    compareString
-                                                            
-                                                            | None -> compareString //default
-                                                    | [] -> compareString //default
+                        | Ok (lhsSelector, rhsSelector) ->
+                            
+                            fun (iNodes:list<INode>) ->
+                                                
+                                // fun(lhs:list<INode>, rhs:list<INode>) ->
+                                iNodes |>
+                                List.filter(fun iNode ->
+                                    //assuming for now that current node is always the root deal with global later tk
+                                    let lhsNodes = [iNode] |> lhsSelector
+                                    let rhsNodes = [iNode] |> rhsSelector
 
-                                                let tests =
-                                                    lhsNodes |>
-                                                    List.fold(fun acc lhsNode ->
-                                                        rhsNodes |>
-                                                        List.fold(fun acc' rhsNode ->
-                                                            (delayed (typedComparator op lhsNode)) rhsNode :: acc'
-                                                        ) acc
-                                                    ) []
+                                    let typedComparator = 
+                                        match lhsNodes with
+                                        | h :: _t ->
+                                            let nodeType = h.getNodeType()
+                                            match nodeType with
+                                            | NodeType.Element ->
+                                                compareString
+                                            | NodeType.Attribute ->
+                                                match tryUnbox<IAttribute> h with
+                                                | Some iAttribute ->
+                                                
+                                                    match iAttribute.getDataType() with
+                                                    | DataType.Float ->
+                                                        compareFloat
+                                                    | DataType.Integer ->
+                                                        compareInt
+                                                    | _ ->
+                                                        compareString
+                                                
+                                                | None -> compareString //default
+                                        | [] -> compareString //default
 
-                                                anyOf(tests)
-                                            )
+                                    let tests =
+                                        lhsNodes |>
+                                        List.fold(fun acc lhsNode ->
+                                            rhsNodes |>
+                                            List.fold(fun acc' rhsNode ->
+                                                (delayed (typedComparator op lhsNode)) rhsNode :: acc'
+                                            ) acc
+                                        ) []
 
-                                    | Error err ->
-                                        printfn "Error: %s" err
-                                        id
-
-
-                            | Error err ->
-                                printfn "Error: %s" err
-                                id
-
-
-                        | FilterExpression.Constant c -> 
-                            fun iNodes ->
-                                f iNodes
-                    | otherType -> 
-                        let msg  = sprintf "Arg error. Expected (JPTerm.FilterExpression lhsExpr, JPTerm.FilterExpression k, JPTerm.FilterExpression rhsExpr),  got %A" otherType
-                        printfn "%s" msg
+                                    anyOf(tests)
+                                )
+                    | _ -> 
+                        printfn "Error Expecting JPTerm.FilterExpression lhsExpr, JPTerm.ComparisonOp op, JPTerm.FilterExpression rhsExpr but got %A" inputs 
                         id
                 | _ -> 
-                    let msg = sprintf "Should not see this.  Error: expected 1 inmput, got %d" inputs.Length
-                    printfn "%s" msg
-                    id        
+                    printfn "Error Expecting 3 inputs, got %d : %A" inputs.Length inputs 
+                    printfn "Error" 
+                    id
         }
     let builderMap:Map<TermKey, FunctionBuilder> = 
         [
