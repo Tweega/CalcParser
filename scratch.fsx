@@ -41,3 +41,7 @@ match res with
 
   // Parser.CalcParser.createCalcDef(expr)
   // let plusEval = Parser.CalcParser.testParseExpression("1 + 2")
+
+
+let hi = ""
+hi[0..0]

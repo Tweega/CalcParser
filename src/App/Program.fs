@@ -35,6 +35,7 @@ let s = "'CDT158' / 'Sinusoid' * 100"
 //     printfn "%s" e
 //-----------------------------
 
-let hh = Parser.JutzParser.testCompile()
+let xPath = "./pump"
+let hh = Parser.JutzParser.parseExpression(xPath)
 printfn "%A" hh
 ignore <| System.Console.ReadLine()

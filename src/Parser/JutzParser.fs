@@ -97,17 +97,33 @@ module JutzParser =
         // abstract bind : ('T -> list<'U>) * 'T -> list<'U>
 
     // we could add starting position in the original parse string to indicate where failure is tk
+    // JutzPath terms reflect the basicunitsof parsing from XPath strings
+    //              
+    //         >=>  
+    //         >=>  
+    //         >=>  
+    //         >=>  
+    //         >=> tryParseFunctionContents 
+    //         >=> 
+
+    type Selector = list<INode> -> list<INode>
+
     [<RequireQualifiedAccessAttribute>]
     type JPTerm =
-    | Axis of Axis
-    | FilterExpression of FilterExpression
-    | NodeSelection of NodeSelection
-    | NodeName of NodeName  //temporary
-    | Filter of Filter
-    | Function of Function
-    | BinaryComparison of BinaryComparison
-    | ComparisonOp of ComparisonOp
-    | Selector of (list<INode> -> list<INode>)
+    | Axis of Axis  //tryParseAxes
+    // | FilterExpression of FilterExpression  
+    | NodeSelection of NodeSelection //tryParseElementSelection, tryParseAttributeSelection
+    // | NodeName of NodeName  //temporary
+    // | Filter of Filter  //tryParseWhere
+    | FunctionName of FunctionName //tryParseFunctionName
+    // | BinaryComparison of BinaryComparison
+    | ComparisonOp of ComparisonOp // tryParseBinaryOperator
+    | ConstantValue of ConstantValue //tryParseConstant
+
+    // synthesised during building so perhaps an XPTerm
+    | Selector of Selector
+    | OpenFilter
+    | CloseFilter
     with
         member this.getTermType() : TermType =
             match this with
@@ -145,15 +161,22 @@ module JutzParser =
 
     and [<RequireQualifiedAccessAttribute>]
         Function =
-        | Function of string * FilterExpression * FilterExpression
+        | Function of string * FilterExpression * FilterExpression  //complex objects are XPTerms not JPTerms
 
     //how do these tie in to the underlying types? tk  
+    // these are te types of the basic parse units
     and [<RequireQualifiedAccessAttribute>]
         TermType =
         | Axis
         | NodeSelection
-        | FilterExpression
-        | BinaryComparison
+        | NodeName
+        | Selector
+        | FunctionName
+        | ComparisonOp
+        | ConstantValue
+        | OpenFilter
+        | CloseFilter
+
 
     and  [<RequireQualifiedAccessAttribute>]
         TermKey =
@@ -167,39 +190,52 @@ module JutzParser =
 
     and FunctionBuilder = 
         {
-            TermType: TermType;  //for labelling purposes only
+            // TermType: TermType;  //for labelling purposes only
             InputTypes: list<TermType>;
             Inputs: list<JPTerm>;
-            Arity: int;
+            // Arity: int;
             MaybeError: option<string>;
+            ApplyArg: (FunctionBuilder * JPTerm) -> ApplyArgResult
             MakeFunction: list<JPTerm> -> (list<INode> -> list<INode>)
         } with
-        
-        member this.getArity() = this.Arity;
-        member this.applyArg(term:JPTerm) =
-            match this.MaybeError with
+
+        static member applyArgDefault(fb: FunctionBuilder, jpTerm: JPTerm) =
+            match fb.MaybeError with
             | None ->
-                match this.InputTypes with
+                match fb.InputTypes with
                 | [] -> 
-                    let msg = sprintf "No values expected when adding term"
-                    Error msg
+                    let msg = sprintf "JPTerm submitted forapplication,butt no term expected %A" jpTerm
+                    ApplyArgResult.Error msg
                 | inType :: t -> 
                     
-                    let termType = term.getTermType()
+                    let termType = jpTerm.getTermType()
                     match termType with
                         | Eq inType ->
-                            Ok ({this with Inputs = term :: this.Inputs; InputTypes = t}, t.Length)
+                            match t.Length with
+                            | Eq 0 ->
+                                ApplyArgResult.Complete {fb with Inputs = jpTerm :: fb.Inputs; InputTypes = t}
+                            | _ ->
+                                ApplyArgResult.Incomplete {fb with Inputs = jpTerm :: fb.Inputs; InputTypes = t}
                         | _ ->
                             let msg = sprintf "Type mismatch: %A does not match %A" inType termType
-                            Error msg
-            | Some err -> Error err
+                            ApplyArgResult.Error msg
+            | Some err -> ApplyArgResult.Error err
 
+        
+        member this.applyArg(term:JPTerm) =
+            this.ApplyArg(this, term)
+            
         member this.getInputs() =
             this.Inputs |> List.rev
-
         
         member this.makeFunction() =
             this.Inputs |> this.MakeFunction
+
+    and [<RequireQualifiedAccessAttribute>]
+        ApplyArgResult =
+        | Complete of FunctionBuilder
+        | Incomplete of FunctionBuilder
+        | Error of string  //include the builder along with the error message? tk
 
     type SelectorStack = list<list<INode> -> list<INode>>
     type XPathStack = list<XPTerm>
@@ -241,7 +277,8 @@ module JutzParser =
     let xPath = "./station/pump1/@pressure"
 
     let doubleQuote = '\"'  
-    let singleQuote =  '\''   
+    let singleQuote =  '\'' 
+
     
     let composeParsers(f1: string -> Result<Option<list<JPTerm>> * string, string>) (f2: string -> Result<option<list<JPTerm>> * string, string>) =
         // composeParsers strings parsers together but is equivalent to oneOf in that it returns after the first successful parse
@@ -467,8 +504,8 @@ module JutzParser =
         | Error msg -> ParseError msg
 
     
-    let parseWhere(s:string) =
-        let reWhere: string = sprintf @"^\[(.+)]"
+    let parseOpenWhere(s:string) =
+        let reWhere: string = sprintf @"^(\[)"
         
         let newValueResult, remaining = reApplyX(reWhere, s)
         match newValueResult with 
@@ -478,7 +515,55 @@ module JutzParser =
             | None -> ParseOK (None, s)
 
             | Some _str ->
-                ParseOK (maybeWhere, remaining[.. remaining.Length -  1]) //strip off the brackets from the where clause
+                ParseOK (maybeWhere, remaining)
+                    
+        | Error msg -> ParseError msg
+
+    
+    let parseCloseWhere(s:string) =
+        let reWhere: string = sprintf @"^(\])"
+        
+        let newValueResult, remaining = reApplyX(reWhere, s)
+        match newValueResult with 
+        | Ok maybeWhere -> 
+        
+            match maybeWhere with 
+            | None -> ParseOK (None, s)
+
+            | Some _str ->
+                ParseOK (maybeWhere, remaining)
+                    
+        | Error msg -> ParseError msg
+
+    
+    let parseOpenFunction(s:string) =
+        let reWhere: string = sprintf @"^(\[)"
+        
+        let newValueResult, remaining = reApplyX(reWhere, s)
+        match newValueResult with 
+        | Ok maybeWhere -> 
+        
+            match maybeWhere with 
+            | None -> ParseOK (None, s)
+
+            | Some _str ->
+                ParseOK (maybeWhere, remaining)
+                    
+        | Error msg -> ParseError msg
+
+    
+    let parseCloseFunction(s:string) =
+        let reWhere: string = sprintf @"^(\))"
+        
+        let newValueResult, remaining = reApplyX(reWhere, s)
+        match newValueResult with 
+        | Ok maybeWhere -> 
+        
+            match maybeWhere with 
+            | None -> ParseOK (None, s)
+
+            | Some _str ->
+                ParseOK (maybeWhere, remaining)
                     
         | Error msg -> ParseError msg
 
@@ -618,8 +703,8 @@ module JutzParser =
     let parseSquareBrackets = parseBrackets('[',']')
     let parseSquigglyBrackets = parseBrackets('{','}')
 
-    let parseOperator(s:string) =
-        let reOp = @"^([+-\/\*\^%])"
+    let parseComparisonOperator(s:string) =
+        let reOp = @"^(>=|>|<=|<|=)"
         let newValueResult, remaining = reApplyX(reOp, s)      
         match newValueResult with 
         | Ok maybeOperator ->
@@ -657,7 +742,7 @@ module JutzParser =
         | _ -> None
 
 
-    let parseAndHandleAxes(input: string) : Result<option<list<JPTerm>> * string, string> =
+    let tryParseAxes(input: string) : Result<option<list<JPTerm>> * string, string> =
         match parseAxisLong(input) with 
         | ParseError msg ->
             Error msg
@@ -685,8 +770,8 @@ module JutzParser =
                             match axis' with 
                             // self and parent get node selectors of any
                             | Axis.Self | Axis.Parent ->
-                                let termAny = (JPTerm.NodeName NodeName.Any)
-                                Ok (Some [termAny; termAxis], remaining') // return terms in reverse order so they can easily be appeded to JPTerm list
+                                let termAny = (JPTerm.NodeSelection {NodeName = NodeName.Any; NodeType = NodeType.Element})
+                                Ok (Some [termAxis; termAny], remaining') 
 
                             | _ -> 
                                 Ok (Some [termAxis], remaining')
@@ -705,7 +790,7 @@ module JutzParser =
     
         
                 
-    let parseAndHandleNodeSelection(input: string) : Result<option<list<JPTerm>>* string, string> =
+    let tryParseNodeSelection(input: string) : Result<option<list<JPTerm>> * string, string> =
         let (res, remaining) =
             match parseElementSelection(input) with
             | ParseOK (None, _s) -> 
@@ -725,7 +810,7 @@ module JutzParser =
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
 
-    let parseAndHandleFunctionName(input: string) : Result<option<list<JPTerm>>* string, string> =
+    let tryParseFunctionName(input: string) : Result<option<list<JPTerm>> * string, string> =
         let (res, remaining) =
             match parseFunctionName(input) with
             | ParseOK (None, _s) -> 
@@ -739,13 +824,31 @@ module JutzParser =
         | Ok maybeMatch -> 
             match maybeMatch with 
             | Some (functionName) ->
-                Ok (Some [JPTerm.NodeName (NodeName.NodeName functionName)], remaining)
+                Ok (Some [JPTerm.FunctionName functionName], remaining)
                 // here we need to process the contents of the function and wrap that in a JPTerm ... or something
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
 
-    
-    let parseAndHandleXSLFunction(input: string) : Result<option<list<JPTerm>>* string, string> =
+    let tryParseConstant(input: string) : Result<option<list<JPTerm>> * string, string> =
+        let (res, remaining) =
+            match parseConstant(input) with
+            | ParseOK (None, _s) -> 
+                 (Ok None, input)
+            | ParseOK (Some x, s) -> 
+                Ok (Some x), s 
+
+            | ParseError msg -> (Error msg, input)
+
+        match res with
+        | Ok maybeMatch -> 
+            match maybeMatch with 
+            | Some (c) ->
+                Ok (Some [JPTerm.ConstantValue {DataType = DataType.String; Value = c}], remaining)
+                // here we need to process the contents of the function and wrap that in a JPTerm ... or something
+            | None -> Ok (None, remaining)
+        | Error msg -> Error msg
+
+    let tryParseXSLFunction(input: string) : Result<option<list<JPTerm>> * string, string> =
         let (res, remaining) =
             match parseElementSelection(input) with
             | ParseOK (None, _s) -> 
@@ -766,7 +869,7 @@ module JutzParser =
         | Error msg -> Error msg
 
 
-    let parseAndHandleSelection(input: string) : Result<option<list<JPTerm>>* string, string> =
+    let tryParseSelection(input: string) : Result<option<list<JPTerm>> * string, string> =
         
         let (res, remaining) =
             match parseElementSelection(input) with
@@ -788,10 +891,10 @@ module JutzParser =
         | Error msg -> Error msg
 
 
-    let parseAndHandleWhere(input: string) : Result<option<list<JPTerm>>* string, string> =
+    let tryParseWhereOpen(input: string) : Result<option<list<JPTerm>> * string, string> =
         
         let (res, remaining) =
-            match parseWhere(input) with
+            match parseOpenWhere(input) with
             | ParseOK (None, _s) -> 
                  (Ok None, input)
             | ParseOK (Some x, s) -> 
@@ -804,14 +907,80 @@ module JutzParser =
         match res with
         | Ok maybeMatch -> 
             match maybeMatch with 
-            | Some (whereClause) ->                                
-                Ok (Some [JPTerm.NodeName (NodeName.NodeName whereClause)], remaining)
+            | Some (_whereClause) ->                                
+                Ok (Some [JPTerm.OpenFilter], remaining)
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
 
+
+    let tryParseWhereClose(input: string) : Result<option<list<JPTerm>> * string, string> =
+        
+        let (res, remaining) =
+            match parseCloseWhere(input) with
+            | ParseOK (None, _s) -> 
+                 (Ok None, input)
+            | ParseOK (Some x, s) -> 
+                // at this point we have to gather terms for str and wrap that up in a JPTerm.Filter
+                // for the moment return a nodename set to this string to parse
+                Ok (Some x), s
+
+            | ParseError msg -> (Error msg, input)
+
+        match res with
+        | Ok maybeMatch -> 
+            match maybeMatch with 
+            | Some (_whereClause) ->                                
+                Ok (Some [JPTerm.CloseFilter], remaining)
+            | None -> Ok (None, remaining)
+        | Error msg -> Error msg
     
 
-    let parseAndHandleElementSelection(input: string) : Result<option<list<JPTerm>>* string, string> =
+
+    let tryParseFunctionOpen(input: string) : Result<option<list<JPTerm>> * string, string> =
+        
+        let (res, remaining) =
+            match parseOpenFunction(input) with
+            | ParseOK (None, _s) -> 
+                 (Ok None, input)
+            | ParseOK (Some x, s) -> 
+                // at this point we have to gather terms for str and wrap that up in a JPTerm.Filter
+                // for the moment return a nodename set to this string to parse
+                Ok (Some x), s
+
+            | ParseError msg -> (Error msg, input)
+
+        match res with
+        | Ok maybeMatch -> 
+            match maybeMatch with 
+            | Some (_whereClause) ->                                
+                Ok (Some [JPTerm.OpenFilter], remaining)
+            | None -> Ok (None, remaining)
+        | Error msg -> Error msg
+
+
+    let tryParseFunctionClose(input: string) : Result<option<list<JPTerm>> * string, string> =
+        
+        let (res, remaining) =
+            match parseCloseFunction(input) with
+            | ParseOK (None, _s) -> 
+                 (Ok None, input)
+            | ParseOK (Some x, s) -> 
+                // at this point we have to gather terms for str and wrap that up in a JPTerm.Filter
+                // for the moment return a nodename set to this string to parse
+                Ok (Some x), s
+
+            | ParseError msg -> (Error msg, input)
+
+        match res with
+        | Ok maybeMatch -> 
+            match maybeMatch with 
+            | Some (_whereClause) ->                                
+                Ok (Some [JPTerm.CloseFilter], remaining)
+            | None -> Ok (None, remaining)
+        | Error msg -> Error msg
+    
+
+    let tryParseElementSelection(input: string) : Result<option<list<JPTerm>> * string, string> =
         
         let (res, remaining) =
             match parseElementSelection(input) with
@@ -831,7 +1000,7 @@ module JutzParser =
 
     
 
-    let parseAndHandleAttributeSelection(input: string) : Result<option<list<JPTerm>>* string, string> =
+    let tryParseAttributeSelection(input: string) : Result<option<list<JPTerm>> * string, string> =
         
         let (res, remaining) =
             match parseAttributeSelection(input) with
@@ -849,7 +1018,34 @@ module JutzParser =
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
 
-    
+    let tryParseComparisonOperator(input: string) =
+        match parseComparisonOperator(input) with 
+
+        | ParseOK (maybeMatch, remaining) -> 
+            match maybeMatch with 
+            | Some opStr ->
+                // printfn "OP: %s" opStr
+                let maybeOp = 
+                    match opStr with 
+                    | "=" -> Some ComparisonOp.EQ
+                    | ">" -> Some ComparisonOp.GT
+                    | ">=" -> Some ComparisonOp.GTE
+                    | "<" -> Some ComparisonOp.LT
+                    | "<=" -> Some ComparisonOp.LTE
+                    | _ -> None
+
+                match maybeOp with 
+                | Some binOp -> 
+                    Ok (Some [JPTerm.ComparisonOp binOp], remaining)
+                | None -> Ok(None, input)
+
+
+            | None ->
+                Ok (None, input)
+
+        | ParseError msg ->
+            Error msg
+
 //---------
 //  type ConstantValue = {
 //         DataType:DataType;
@@ -867,12 +1063,12 @@ module JutzParser =
 //     | Constant of ConstantValue
 
 
-    let parseAndHandleString(quot: char)(input: string) =
+    let tryParseString(quot: char)(input: string) =
         match parseString(quot)(input) with 
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
-                let term = ({DataType = DataType.String; Value = str}) |> (FilterExpression.ConstantValue >> JPTerm.FilterExpression)
+                let term = ({DataType = DataType.String; Value = str}) |> JPTerm.ConstantValue
                 
                 Ok (Some [term], remaining)
             | None -> Ok (None, input)
@@ -880,7 +1076,7 @@ module JutzParser =
         | ParseError msg ->
             Error msg
 
-    let parseAndHandleNumber(input: string) =
+    let tryParseNumber(input: string) =
         match parseNumber(input) with 
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
@@ -890,7 +1086,7 @@ module JutzParser =
                     | true -> DataType.Float
                     | false -> DataType.Integer
 
-                let term = ({DataType = dt; Value = str}) |> (FilterExpression.ConstantValue >> JPTerm.FilterExpression)
+                let term = ({DataType = dt; Value = str}) |> JPTerm.ConstantValue
                 Ok (Some [term], remaining)
             | None -> Ok (None, input)
             
@@ -898,7 +1094,7 @@ module JutzParser =
             Error msg
 
     
-    let parseAndHandleTag(input: string) =
+    let tryParseTag(input: string) =
         match parseTag(input) with 
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
@@ -911,7 +1107,7 @@ module JutzParser =
             Error msg
     
     
-    let parseAndHandlePath(input: string, terms: list<TypedTerm>) =
+    let tryParsePath(input: string, terms: list<TypedTerm>) =
         match parseTag(input) with 
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
@@ -924,39 +1120,7 @@ module JutzParser =
             Error msg
     
     
-    let parseAndHandleBinaryOperator(input: string) =
-        match parseOperator(input) with 
-
-        | ParseOK (maybeMatch, remaining) -> 
-            match maybeMatch with 
-            | Some opStr ->
-                // printfn "OP: %s" opStr
-                let binOp = 
-                    match opStr with 
-                    | "+" -> opPlus
-                    | "-" -> opMinus
-                    | "*" -> opMultiply
-                    | "/" -> opDivide
-                    | "%" -> opModulo
-                    | "^" -> opPower
-                    | _ -> noOp
-
-                let binOp' = {
-                    Operator = binOp;
-                    LHS = None;
-                    RHS = None;
-                } 
-                
-                let term = binOp' |> BinaryOp
-
-                Ok (Some (term, DataType.Unknown), remaining)
-
-            | None ->
-                Ok (None, input)
-
-        | ParseError msg ->
-            Error msg
-
+    
     //is this function needed - does not do very much working here do we need to sketch out what we are doing??
     // this is different to reading a file
     // there is a point  at which work is done, but the context of a file  read does not change
@@ -1270,18 +1434,15 @@ module JutzParser =
                         
     //This defines the arguments a function is expecting -for Axis child, just a node selection
 
-    type Selector = list<INode> -> list<INode>
-
     let composeSelectors(s1:Selector) (s2:Selector) =
         lift s1 s2
     
     let makeAxisBuilder(axis:Axis, selector:NodeSelection -> list<INode>-> list<INode>) : FunctionBuilder =
         {
-            TermType = TermType.Axis;
             InputTypes = [TermType.NodeSelection];
-            Inputs = [];
-            Arity = 1;
+            Inputs = [];            
             MaybeError = None;
+            ApplyArg = fun(this, jpTerm) -> this.applyArg(jpTerm)
             MakeFunction = fun(inputs) ->
                 // inputs will already have been validated via applyArg
                 match inputs with
@@ -1311,32 +1472,28 @@ module JutzParser =
     // have mapJPXP provate to compile function meaning that everything else just deals with JPTerms
     let rec compileXPathFromTerms(jpTerms:list<JPTerm>) = 
         let xpTerms = mapJPXP(jpTerms)
-        let rec applyTerm(accSelectors':SelectorStack, accBuilders':list<FunctionBuilder>, jpTerm': JPTerm) =
-            printfn "Applying JPTerm: %A" jpTerm'
+        let rec applyTerm(accSelectors':SelectorStack, accBuilders':list<FunctionBuilder>, jpTerm: JPTerm) =
+            printfn "Applying JPTerm: %A" jpTerm
             
             match accBuilders' with
             | h :: t ->
-                let applicationResult = h.applyArg(jpTerm')
-                match applicationResult with
-                | Ok (builder: FunctionBuilder, arity:int) ->
-                    match arity with
-                    | Eq 0 -> 
-                        let selector = builder.makeFunction()
-                        applyTerm(accSelectors', t, JPTerm.Selector selector)
-                    | _ ->
-                        // this builder still needs inputs
-                        Ok (accSelectors', builder :: t)
-                | Error err ->
-                    // (accSelectors', accBuilders')
-                    Error err
+                let applyResult = h.ApplyArg(h, jpTerm)
+                match applyResult with
+                | ApplyArgResult.Incomplete fb ->
+                    Ok (accSelectors', fb :: t)
+                | ApplyArgResult.Complete fb ->
+                    let selector = fb.makeFunction()
+                    applyTerm(accSelectors', t, JPTerm.Selector selector)
+                | ApplyArgResult.Error err -> Error err
+            
                     
             | [] -> 
                 // no builder, see if we have a selector
-                match jpTerm' with
+                match jpTerm with
                 | JPTerm.Selector selector ->
                     Ok (selector :: accSelectors', accBuilders')
                 | _ -> 
-                    let msg = sprintf "Top level term is not a selector: %A" jpTerm'
+                    let msg = sprintf "Top level term is not a selector: %A" jpTerm
                     Error msg
 
         printfn "xpTerms: %A" xpTerms
@@ -1375,94 +1532,59 @@ module JutzParser =
 
     
 
-    and comparisonBuilder() : FunctionBuilder =
+    and comparisonFilterBuilder() : FunctionBuilder =
         {
-            TermType = TermType.BinaryComparison;
-            InputTypes = [TermType.FilterExpression; TermType.BinaryComparison; TermType.FilterExpression];
+            InputTypes = [TermType.OpenFilter; TermType.Selector; TermType.ComparisonOp; TermType.Selector; TermType.CloseFilter];
             Inputs = [];
-            Arity = 3;
             MaybeError = None;
-            MakeFunction = fun(inputs) ->
+            ApplyArg = fun (this, jpTerm) -> this.applyArg(jpTerm)
+            MakeFunction = fun(inputs) ->   //this function is called via FunctionBuilder.makeFunction which passes in inputs list
                 // inputs will already have been validated via applyArg
                 match inputs with
                 | lhsTerm :: binOp :: rhsTerm :: [] ->
                     match (lhsTerm, binOp, rhsTerm) with 
-                    | (JPTerm.FilterExpression lhsExpr, JPTerm.ComparisonOp op, JPTerm.FilterExpression rhsExpr) ->
-                        let lRes = 
+                    | (JPTerm.Selector lhsSelector, JPTerm.ComparisonOp op, JPTerm.Selector rhsSelector) ->
+                        
+                        fun (iNodes:list<INode>) ->
+                            iNodes |>
+                            List.filter(fun iNode ->
+                                //assuming for now that current node is always the root deal with global later tk
+                                let lhsNodes = [iNode] |> lhsSelector
+                                let rhsNodes = [iNode] |> rhsSelector
 
-                            match lhsExpr with
-                            | FilterExpression.Expression expr ->
-                                // we want to reduce expr to a selector on which we will call getValue
-                                compileXPathFromTerms(expr)
-                            
-                            | FilterExpression.ConstantValue c -> 
-                                let iNode = makeAttributeFromConstant(c):> INode
-                                Ok (fun _iNodes -> [iNode])
-                        let rRes =
-                            match rhsExpr with
-                            | FilterExpression.Expression expr ->
-                                // we want to reduce expr to a selector on which we will call getValue
-                                compileXPathFromTerms(expr)
-                            
-                            | FilterExpression.ConstantValue c -> 
-                                let iNode = makeAttributeFromConstant(c):> INode
-                                Ok (fun iNodes -> [iNode])
-                            
-                        let jj = 
-                            lRes |> Result.bind(fun l ->
-                                rRes |> Result.bind(fun r ->
-                                    Ok (l,r)
-                                )
+                                let typedComparator = 
+                                    match lhsNodes with
+                                    | h :: _t ->
+                                        let nodeType = h.getNodeType()
+                                        match nodeType with
+                                        | NodeType.Element ->
+                                            compareString
+                                        | NodeType.Attribute ->
+                                            match tryUnbox<IAttribute> h with
+                                            | Some iAttribute ->
+                                            
+                                                match iAttribute.getDataType() with
+                                                | DataType.Float ->
+                                                    compareFloat
+                                                | DataType.Integer ->
+                                                    compareInt
+                                                | _ ->
+                                                    compareString
+                                            
+                                            | None -> compareString //default
+                                    | [] -> compareString //default
+
+                                let tests =
+                                    lhsNodes |>
+                                    List.fold(fun acc lhsNode ->
+                                        rhsNodes |>
+                                        List.fold(fun acc' rhsNode ->
+                                            (delay (typedComparator op lhsNode)) rhsNode :: acc'
+                                        ) acc
+                                    ) []
+
+                                anyOf(tests)
                             )
-                        match jj with 
-                        | Error err -> 
-                            printfn "%s" err
-                            fun _nodes -> []
-
-                        | Ok (lhsSelector, rhsSelector) ->
-                            
-                            fun (iNodes:list<INode>) ->
-                                                
-                                // fun(lhs:list<INode>, rhs:list<INode>) ->
-                                iNodes |>
-                                List.filter(fun iNode ->
-                                    //assuming for now that current node is always the root deal with global later tk
-                                    let lhsNodes = [iNode] |> lhsSelector
-                                    let rhsNodes = [iNode] |> rhsSelector
-
-                                    let typedComparator = 
-                                        match lhsNodes with
-                                        | h :: _t ->
-                                            let nodeType = h.getNodeType()
-                                            match nodeType with
-                                            | NodeType.Element ->
-                                                compareString
-                                            | NodeType.Attribute ->
-                                                match tryUnbox<IAttribute> h with
-                                                | Some iAttribute ->
-                                                
-                                                    match iAttribute.getDataType() with
-                                                    | DataType.Float ->
-                                                        compareFloat
-                                                    | DataType.Integer ->
-                                                        compareInt
-                                                    | _ ->
-                                                        compareString
-                                                
-                                                | None -> compareString //default
-                                        | [] -> compareString //default
-
-                                    let tests =
-                                        lhsNodes |>
-                                        List.fold(fun acc lhsNode ->
-                                            rhsNodes |>
-                                            List.fold(fun acc' rhsNode ->
-                                                (delay (typedComparator op lhsNode)) rhsNode :: acc'
-                                            ) acc
-                                        ) []
-
-                                    anyOf(tests)
-                                )
                     | _ -> 
                         printfn "Error Expecting JPTerm.FilterExpression lhsExpr, JPTerm.ComparisonOp op, JPTerm.FilterExpression rhsExpr but got %A" inputs 
                         fun _nodes -> []
@@ -1474,22 +1596,29 @@ module JutzParser =
 
 
     and mapJPXP(jpTerms':list<JPTerm>) = 
-        let d = 4
-        let h = 43
+        let stringFunctionMap = // string -> string -> bool
+            [
+                ("contains", fun(s1:string, s2:string) -> s1.Contains(s2));
+                ("starts-with", fun(s1:string, s2:string) -> s1.StartsWith(s2));
+                ("ends-with", fun(s1:string, s2:string) -> s1.EndsWith(s2));
+            ]
+        let resolvedConstantMap =
+            [
+                ("mid", fun(s1:string, startIndex:int, endIndex:int) -> s1[startIndex..endIndex]);
 
+            ]
         let builderMap = 
             [
-                (TermKey.Axis Axis.Child, makeAxisBuilder (Axis.Child, getNodes))
-                (TermKey.Axis Axis.Parent, makeAxisBuilder (Axis.Parent, ff getParent))
-                (TermKey.Axis Axis.Ancestor, makeAxisBuilder (Axis.Ancestor, ff getAncestors))
-                (TermKey.Axis Axis.AncestorOrSelf, makeAxisBuilder (Axis.AncestorOrSelf, ff getAncestorsOrSelf))
-                (TermKey.Axis Axis.Descendant, makeAxisBuilder (Axis.Descendant, ff getDescendants))
-                (TermKey.Axis Axis.DescendantOrSelf, makeAxisBuilder (Axis.DescendantOrSelf, ff getDescendantsOrSelf))
-                (TermKey.Axis Axis.Self, makeAxisBuilder (Axis.Self, ff getSelf))
-                (TermKey.TermType TermType.BinaryComparison, comparisonBuilder())
-                // (TermKey.TermType TermType.NodeSelection, XPTerm.Value )
-            ] 
-            |> Map.ofList
+            (TermKey.Axis Axis.Child, makeAxisBuilder (Axis.Child, getNodes))
+            (TermKey.Axis Axis.Parent, makeAxisBuilder (Axis.Parent, ff getParent))
+            (TermKey.Axis Axis.Ancestor, makeAxisBuilder (Axis.Ancestor, ff getAncestors))
+            (TermKey.Axis Axis.AncestorOrSelf, makeAxisBuilder (Axis.AncestorOrSelf, ff getAncestorsOrSelf))
+            (TermKey.Axis Axis.Descendant, makeAxisBuilder (Axis.Descendant, ff getDescendants))
+            (TermKey.Axis Axis.DescendantOrSelf, makeAxisBuilder (Axis.DescendantOrSelf, ff getDescendantsOrSelf))
+            (TermKey.Axis Axis.Self, makeAxisBuilder (Axis.Self, ff getSelf))
+            (TermKey.TermType TermType.OpenFilter, filterDelegator())
+            // (TermKey.TermType TermType.NodeSelection, XPTerm.Value )
+            ] |> Map.ofList
 
         let (terms, status') =
             jpTerms' |>
@@ -1501,14 +1630,7 @@ module JutzParser =
                     match builderMap with
                     | Exists key functionBuilder ->
                         let acc' = (XPTerm.Builder functionBuilder) :: acc
-                        let acc'' =
-                            match jpTerm with
-                            | JPTerm.BinaryComparison {LHS=lhs; ComparisonOp = op; RHS = rhs} ->
-                                let h1 = XPTerm.XPValue (JPTerm.FilterExpression lhs) :: acc'
-                                let h2 = XPTerm.XPValue (JPTerm.ComparisonOp op) :: h1
-                                XPTerm.XPValue (JPTerm.FilterExpression rhs) :: h2
-                            | _ -> acc'
-                        acc'', None
+                        acc', None
 
                     | _ -> 
                         // assume that this JPTerm is a value - find away to check this? tk
@@ -1521,71 +1643,127 @@ module JutzParser =
         | None -> terms
         |> List.rev
 
-    
+    // filterBuilder is created when we get an open square bracket  [
+    // it collects terms until it can determine a builder to delegate to
+    // which in this case will be one of FunctionBuilder or ComparisonBuilder
+    // the filter delegator will expect a selector as the first parameter
+    // which might either be a function or the beginnings of a comparison
+    // the second argument will either be close scope or  an operator
+    and filterDelegator() : FunctionBuilder =
+        {
+            InputTypes = []; //filterBuilder delegates to comparisonBuilder and functionBuilder
+            Inputs = [];
+            MaybeError = None;
+            ApplyArg = fun(this, jpTerm) -> 
+                match jpTerm with
+                
+                | JPTerm.OpenFilter ->
+                    match this.Inputs with
+                    | [] ->
+                        ApplyArgResult.Incomplete {this with Inputs = [jpTerm]}
+                    | _ -> 
+                        let msg = sprintf "Error: expected one of Selector or functionName but got %A" jpTerm
+                        ApplyArgResult.Error msg
+
+                | JPTerm.FunctionName _functionName ->
+                    ApplyArgResult.Error "Not implemented yet tbd tk"
+
+                | _ -> 
+                    match this.Inputs with
+                    | h :: [] ->
+                        let cb = comparisonFilterBuilder()
+                        let fb' = cb.applyArg(h) 
+                        match fb' with 
+                        | ApplyArgResult.Incomplete fb ->
+                                fb.applyArg(jpTerm) 
+                        | ApplyArgResult.Complete _fb ->
+                            let msg = sprintf "Error: Not expecting comparisonFilterBuilder to be complete%A" jpTerm
+                            ApplyArgResult.Error msg
+                    
+                        | ApplyArgResult.Error msg ->
+                            ApplyArgResult.Error msg
+                    
+                    | _ -> 
+                        let msg = sprintf "Unexpected number of inputs in filterDelegator %d %A" this.Inputs.Length jpTerm
+                        ApplyArgResult.Error msg
+
+            MakeFunction = fun(inputs) ->   //this function is called via FunctionBuilder.makeFunction which passes in inputs list                
+                printfn "This function should not be called.  Filter delegator should have delegated (we should return a result here tk)"
+                fun _nodes -> []
+        } 
+
     // the problem with these terms is that BinaryComparison is not a basic unit
     // in a way xpTerms are more fundamental even though they have builder info added
-    let jpTerms'' = [
-        JPTerm.Axis Axis.Child; 
-        JPTerm.NodeSelection {NodeName = NodeName.NodeName "station"; NodeType = NodeType.Element};
-        JPTerm.BinaryComparison {
-            LHS= FilterExpression.Expression [
-                JPTerm.Axis Axis.Child; 
-                JPTerm.NodeSelection {NodeName = NodeName.NodeName "pump"; NodeType = NodeType.Element};
-            ]
-            RHS = FilterExpression.Expression  [
-                JPTerm.Axis Axis.Child; 
-                JPTerm.NodeSelection {NodeName = NodeName.NodeName "pump"; NodeType = NodeType.Element};
-            ]
-            ComparisonOp = ComparisonOp.EQ;
-        };
-    ]
-
-
-    let testCompile() =
-        // let xpTerms = mapJPXP(jpTerms'')
-        compileXPathFromTerms(jpTerms'')
-        
     // let inputs = argApplicationResult'.getInputs()
 
-    // let parseConstant = (parseAndHandleString) >=> parseAndHandleNumber
+    // let parseConstant = (tryParseString) >=> tryParseNumber
     
     let rec parseExpression(expr: string) =
         // let rootOp = makeRootOp()
         // let opStack: Stack<BinaryOp> = Stack []
         // let rootStack = Stack.push rootOp opStacks
+        // when we get to a where clause we either need to recurse
+        // or have some other way of delineating the scope of the inner clause
+        // or do we know that scope has  finished once we resolve a selector
+
+        // prefix with / if not already starting with one - this rules out a pure constant tk
+        // it requires that an XPath string alwaysbegins with a node selection
+        // which may be fair enough
+        let expr' =
+            match expr[0..0] with
+            | Eq @"/" -> expr
+            | _ -> "/" + expr
+
         let tryEverything = 
-                parseAndHandleAxes 
-            >=> parseAndHandleElementSelection 
-            >=> parseAndHandleAttributeSelection 
-            >=> parseAndHandleWhere 
-            >=> parseAndHandleFunctionName 
-            >=> parseAndHandleFunctionContents 
-            >=> parseAndHandleConstant
+                tryParseAxes 
+            >=> tryParseElementSelection 
+            >=> tryParseAttributeSelection 
+            >=> tryParseWhereOpen
+            >=> tryParseWhereClose
+            >=> tryParseFunctionOpen
+            >=> tryParseFunctionClose 
+            >=> tryParseFunctionName
+            // >=> tryParseFunctionContents 
+            >=> tryParseComparisonOperator
+            >=> tryParseConstant
+
+        let rec f(acc: Result<list<JPTerm> * string, string>) =
+            match acc with
+            |Ok (terms, remaining) ->
+                    match remaining.Length with
+                    | Eq 0 -> acc
+                    | _ -> 
+                        match tryEverything(remaining) with
+                        | Ok (Some terms', remaining') ->
+                            let newTerms =
+                                terms' |>
+                                List.fold(fun accu i ->
+                                    i :: accu
+                                ) terms
+                            f(Ok (newTerms, remaining'))
+                        | Ok (None, remaining') ->
+                            // let x = expr[expr.Length - remaining'.Length .. ]
+                            let msg = sprintf "Unable to find a parse match for string %s" remaining'
+                            Error msg
+                        | Error err ->
+                            Error err
+            | Error err ->
+                Error err
+
+        let g:Result<list<JPTerm> * string, string> = f(Ok ([], expr'))
+        match g with
+        | Ok (terms, remaining) ->
+            printfn "Successful parse"
+        | Error err ->
+            printfn "%s" err
 
 
             
-        printfn "%A" parseResult
+
+            
+        printfn "%A" g
 
 
-
-    and parseAndHandleFunctionContents(input: string) : Result<option<list<JPTerm>>* string, string> =
-        let (res, remaining) =
-            match parseFunctionContents(input) with
-            | ParseOK (None, _s) -> 
-                 (Ok None, input)
-            | ParseOK (Some x, s) -> 
-                Ok (Some x), s
-
-            | ParseError msg -> (Error msg, input)
-
-        match res with
-        | Ok maybeMatch -> 
-            match maybeMatch with 
-            | Some (functionName) ->
-                Ok (Some [JPTerm.NodeName (NodeName.NodeName functionName)], remaining)
-                // here we need to process the contents of the function and wrap that in a JPTerm ... or something
-            | None -> Ok (None, remaining)
-        | Error msg -> Error msg
 
     let rec gatherTerms(input: string, values: list<Value * DataType>, binOps: list<BinaryOp>, expecting: Expecting) : Result<list<Value * DataType> * list<BinaryOp>, string> =    
         // this function does an initial pass through the expression, creating a list of terms
