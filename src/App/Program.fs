@@ -35,7 +35,7 @@ let s = "'CDT158' / 'Sinusoid' * 100"
 //     printfn "%s" e
 //-----------------------------
 
-let xPath = "./pump[@pressure = 1]"
+let xPath = "./pump[@pressure = 1][@flow = 2]"
 // let xPath = "./pump/@pressure"
 let jpTermsResult = Parser.JutzParser.parseExpression(xPath)
 match jpTermsResult with

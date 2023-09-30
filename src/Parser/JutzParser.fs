@@ -203,7 +203,7 @@ module JutzParser =
     and [<RequireQualifiedAccessAttribute>]
         XPTerm = 
         | XPValue of JPTerm
-        | Builder of FunctionBuilder
+        | Builder of FunctionBuilder * JPTerm   //JPTerm is the term that originates creation of function builder
 
     and FunctionBuilder = 
         {
@@ -1280,15 +1280,15 @@ module JutzParser =
     
     let makeAxisBuilder(selector:NodeName -> list<INode>-> list<INode>) : FunctionBuilder =
         {
-            InputTypes = [TermType.NodeName];
+            InputTypes = [TermType.Axis; TermType.NodeName];
             Inputs = [];            
             MaybeError = None;
             ApplyArg = fun(this, jpTerm) -> FunctionBuilder.applyArgDefault(this, jpTerm)
             MakeFunction = fun(inputs) ->
                 // inputs will already have been validated via applyArg
                 match inputs with
-                | jpTerm :: [] ->
-                    match jpTerm with 
+                | _axis :: jpNodeName :: [] ->
+                    match jpNodeName with 
                     | JPTerm.NodeName nodeName ->
                         let f = selector nodeName
                         fun iNodes ->
@@ -1309,6 +1309,30 @@ module JutzParser =
         fun(t: 'T) -> 
             fun() ->
                 f t
+
+    let constantSelector() : FunctionBuilder =
+        {
+            InputTypes = [TermType.ConstantValue]
+            Inputs = [];
+            MaybeError = None;
+            ApplyArg = fun(this, jpTerm) -> FunctionBuilder.applyArgDefault(this,jpTerm)
+                
+
+            MakeFunction = fun(inputs) ->   //this function is called via FunctionBuilder.makeFunction which passes in inputs list                
+                match inputs with 
+                | h :: [] ->
+                    match h with
+                    | JPTerm.ConstantValue cv ->
+                        let attrNode = makeAttributeFromConstant(cv)
+                        // fun _nodes -> [attrNode]
+                        constant [attrNode]
+                    | _ ->
+                        printfn "Error: WrongExpected a  constant value as input but got %A " h
+                        fun _nodes -> []
+                | _ ->
+                    printfn "Error: Wrong number of inputs in constanSelector"
+                    fun _nodes -> []
+        } 
 
     // have mapJPXP provate to compile function meaning that everything else just deals with JPTerms
     let rec compileXPathFromTerms(jpTerms:list<JPTerm>) = 
@@ -1345,15 +1369,18 @@ module JutzParser =
                 match maybeError with 
                 | Some _err -> maybeError, accSelectors, accBuilders
                 | None ->
-                    match xpTerm with
-                    | XPTerm.Builder builder ->
-                        None, accSelectors, builder :: accBuilders
-                    | XPTerm.XPValue jpTerm ->
-                        match applyTerm (accSelectors, accBuilders, jpTerm) with
-                        | Ok (selectorStack, builderStack) ->
-                            (None, selectorStack, builderStack)
-                        | Error err ->
-                            (Some err, accSelectors, accBuilders)
+                    let (jpTerm', accSelectors', accBuilders') =
+                        match xpTerm with
+                        | XPTerm.Builder (builder, jpTerm) ->
+                            jpTerm, accSelectors, builder :: accBuilders
+                        | XPTerm.XPValue jpTerm ->
+                            jpTerm, accSelectors, accBuilders
+
+                    match applyTerm (accSelectors', accBuilders', jpTerm') with
+                    | Ok (selectorStack, builderStack) ->
+                        (None, selectorStack, builderStack)
+                    | Error err ->
+                        (Some err, accSelectors, accBuilders)
 
                 // acc.applyArg(i)
             )(None, [],[])
@@ -1375,14 +1402,14 @@ module JutzParser =
 
     and comparisonFilterBuilder() : FunctionBuilder =
         {
-            InputTypes = [TermType.Selector; TermType.ComparisonOp; TermType.Selector; TermType.CloseFilter];
+            InputTypes = [TermType.OpenFilter; TermType.Selector; TermType.ComparisonOp; TermType.Selector; TermType.CloseFilter];
             Inputs = [];
             MaybeError = None;
             ApplyArg = fun(this, jpTerm) -> FunctionBuilder.applyArgDefault(this, jpTerm)
             MakeFunction = fun(inputs) ->   //this function is called via FunctionBuilder.makeFunction which passes in inputs list
                 // inputs will already have been validated via applyArg
                 match inputs with
-                | lhsTerm :: binOp :: rhsTerm :: [] ->
+                | _open :: lhsTerm :: binOp :: rhsTerm :: _close ::[] ->
                     match (lhsTerm, binOp, rhsTerm) with 
                     | (JPTerm.Selector lhsSelector, JPTerm.ComparisonOp op, JPTerm.Selector rhsSelector) ->
                         
@@ -1430,13 +1457,13 @@ module JutzParser =
                         printfn "Error Expecting JPTerm.FilterExpression lhsExpr, JPTerm.ComparisonOp op, JPTerm.FilterExpression rhsExpr but got %A" inputs 
                         fun _nodes -> []
                 | _ -> 
-                    printfn "Error Expecting 3 inputs, got %d : %A" inputs.Length inputs 
+                    printfn "Error Expecting 5 inputs (including open and close brackets), got %d : %A" inputs.Length inputs 
                     printfn "Error" 
                     fun _nodes -> []
         }
 
 
-    and mapJPXP(jpTerms':list<JPTerm>) = 
+    and mapJPXP(jpTerms':list<JPTerm>) : list<XPTerm> = 
         let stringFunctionMap = // string -> string -> bool
             [
                 ("contains", fun(s1:string, s2:string) -> s1.Contains(s2));
@@ -1459,6 +1486,7 @@ module JutzParser =
             (TermKey.Axis Axis.DescendantOrSelf, makeAxisBuilder (getDescendantsOrSelf))
             (TermKey.Axis Axis.Self, makeAxisBuilder (getSelf))
             (TermKey.TermType TermType.OpenFilter, filterDelegator())
+            (TermKey.TermType TermType.ConstantValue, constantSelector())
             // (TermKey.TermType TermType.NodeSelection, XPTerm.Value )
             ] |> Map.ofList
 
@@ -1471,7 +1499,7 @@ module JutzParser =
                     let  key = jpTerm.getTermKey()
                     match builderMap with
                     | Exists key functionBuilder ->
-                        let acc' = (XPTerm.Builder functionBuilder) :: acc
+                        let acc' = (XPTerm.Builder (functionBuilder, jpTerm)) :: acc
                         acc', None
 
                     | _ -> 
@@ -1493,25 +1521,54 @@ module JutzParser =
     // the second argument will either be close scope or  an operator
     and filterDelegator() : FunctionBuilder =
         {
-            InputTypes = []; //filterBuilder delegates to comparisonBuilder and functionBuilder
+            InputTypes = []; //not used -filterBuilder delegates to comparisonBuilder and functionBuilder
             Inputs = [];
             MaybeError = None;
             ApplyArg = fun(this, jpTerm) -> 
-                match jpTerm with
+                match this.Inputs with
+                | [] ->
+                    // expecting an open filter
+                    match jpTerm with
                 
-                | JPTerm.Selector _ ->
-                    // comparison builder - we don't have any existing terms to copy over, just the one that has come in
-                    let cb = comparisonFilterBuilder()
-                    cb.applyArg(jpTerm)
+                    | JPTerm.OpenFilter ->
+                        ApplyArgResult.Incomplete {this with Inputs = [jpTerm]}
+                    | _ -> 
+                        let msg = sprintf "Error: expected one of Open Filter but got %A" jpTerm
+                        ApplyArgResult.Error msg
+
+                | h :: [] ->
+                    match jpTerm with
+                    | JPTerm.Selector _ ->
+                        // comparison builder - we don't have any existing terms to copy over, just the one that has come in
+                        let cb = comparisonFilterBuilder()
+                        // cb.applyArg(jpTerm)
+                        //-----------------
+
+                        let cb = comparisonFilterBuilder()
+                        let fb' = cb.applyArg(h) 
+                        match fb' with 
+                        | ApplyArgResult.Incomplete fb ->
+                                fb.applyArg(jpTerm) 
+                        | ApplyArgResult.Complete _fb ->
+                            let msg = sprintf "Error: Not expecting comparisonFilterBuilder to be complete%A" jpTerm
+                            ApplyArgResult.Error msg
                     
-                | JPTerm.FunctionName _functionName ->
-                    ApplyArgResult.Error "Not implemented yet tbd tk"
+                        | ApplyArgResult.Error msg ->
+                            ApplyArgResult.Error msg
+                    
+                        //--------------------
+                    | JPTerm.FunctionName _functionName ->
+                        ApplyArgResult.Error "Not implemented yet tbd tk"
+
+                    | _ ->
+                        let msg = sprintf "Error: expected one of Selector, FunctionName but got %A" jpTerm
+                        ApplyArgResult.Error msg
 
                 | _ ->                    
                     let msg = sprintf "Unexpected number of inputs in filterDelegator %d %A" this.Inputs.Length jpTerm
                     ApplyArgResult.Error msg
 
-            MakeFunction = fun(inputs) ->   //this function is called via FunctionBuilder.makeFunction which passes in inputs list                
+            MakeFunction = fun(_inputs) ->   //this function is called via FunctionBuilder.makeFunction which passes in inputs list                
                 printfn "This function should not be called.  Filter delegator should have delegated (we should return a result here tk)"
                 fun _nodes -> []
         } 
