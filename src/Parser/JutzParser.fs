@@ -35,21 +35,23 @@ module JutzParser =
     | LTE
     | GTE
     | EQ
-    
+
+    [<RequireQualifiedAccessAttribute>]
+    type NodeType =
+    | Element
+    | Attribute
+
+
     [<RequireQualifiedAccessAttribute>]
     type Axis =
     | Self
-    | Child
+    | Child of NodeType //allother axes are assumed to be elements
     | Parent
     | Ancestor
     | Descendant
     | DescendantOrSelf
     | AncestorOrSelf
 
-    [<RequireQualifiedAccessAttribute>]
-    type NodeType =
-    | Element
-    | Attribute
 
     type FunctionName = string
 
@@ -63,12 +65,7 @@ module JutzParser =
     | NodeName of string
     | Any
 
-    [<RequireQualifiedAccessAttribute>]
-     type NodeSelection = {
-        NodeName: NodeName;
-        NodeType: NodeType;
-    }
-
+    
     type ConstantValue = {
         DataType:DataType;
         Value: string;
@@ -80,7 +77,7 @@ module JutzParser =
         abstract getAttributeNodes : unit -> list<INode>
         // abstract getAttributes : unit -> list<IAttribute>
         abstract getAttribute : string -> option<IAttribute>
-        // abstract getNodes : NodeType -> list<INode>
+        // abstract getChildNodes : NodeType -> list<INode>
         abstract getParent : unit -> option<INode>
         abstract getName : unit -> string
         abstract getNodeType: unit -> NodeType
@@ -112,8 +109,8 @@ module JutzParser =
     type JPTerm =
     | Axis of Axis  //tryParseAxes
     // | FilterExpression of FilterExpression  
-    | NodeSelection of NodeSelection //tryParseElementSelection, tryParseAttributeSelection
-    // | NodeName of NodeName  //temporary
+    // | NodeSelection of NodeSelection //tryParseNodeName, tryParseAttributeSelection
+    | NodeName of NodeName
     // | Filter of Filter  //tryParseWhere
     | FunctionName of FunctionName //tryParseFunctionName
     // | BinaryComparison of BinaryComparison
@@ -128,16 +125,16 @@ module JutzParser =
         member this.getTermType() : TermType =
             match this with
             | JPTerm.Axis _ -> TermType.Axis
-            | _ -> TermType.NodeSelection
+            | _ -> TermType.NodeName //this section needs expanding for filters? tk
         member this.getTermKey() =
             match this with
             | JPTerm.Axis axis -> 
                 TermKey.Axis axis
-            | _ -> TermKey.TermType TermType.NodeSelection
+            | _ -> TermKey.TermType TermType.NodeName   //this needs expanding tk
         member this.getInputs() : list<TermType> =
             match this with
-            | JPTerm.Axis _ -> [TermType.NodeSelection]
-            | JPTerm.NodeSelection _ -> []
+            | JPTerm.Axis _ -> [TermType.NodeName]
+            | JPTerm.NodeName _ -> [] //this needs expanding tk
             | _ -> []
             
     and  [<RequireQualifiedAccessAttribute>]
@@ -168,7 +165,7 @@ module JutzParser =
     and [<RequireQualifiedAccessAttribute>]
         TermType =
         | Axis
-        | NodeSelection
+        // | NodeSelection
         | NodeName
         | Selector
         | FunctionName
@@ -306,7 +303,7 @@ module JutzParser =
 
     let (>=>) = composeParsers
 
-    let reApply(re: string, s: string) =
+    let reApplyz(bMatchOnly: bool)(re: string, s: string) =
         // s is a string to be parsed and it is expected that this operation will match some or none characters from the front
         // either as a direct match or as a single group in which case some marker characters, such as brackets will be thrown away
         printfn "reApply has received [%s:%s]" s re
@@ -322,7 +319,12 @@ module JutzParser =
                     printfn "We have a match: %A %d" m.Groups[0].Value m.Groups.Count
                     printfn "We have a match: %A %d" m.Groups[1].Value m.Groups.Count
                     printfn "remaining::%s" s[m.Groups[1].Value.Length ..]
-                    (Ok (Some m.Groups[1].Value), s[m.Length ..])
+                    let matchStr = m.Groups[1].Value
+                    let matchLen = 
+                        match bMatchOnly with
+                        | true -> matchStr.Length
+                        | false -> m.Length
+                    (Ok (Some matchStr), s[matchLen ..])
                 | _ -> 
                     let msg = sprintf "More than one group matched in reg exp: %s on string: %s" re s
                     (Error msg), s
@@ -333,6 +335,9 @@ module JutzParser =
             printfn "no match: %s :%s " re s
             Ok None, s
 
+    let reApply(re: string, s: string) =
+        reApplyz(true)(re, s)
+
     let parseWhitespace(s: string)  =
         let reWhitespace: string = @"^\s+"
         let newValueResult, remaining = reApply(reWhitespace, s)  
@@ -342,16 +347,20 @@ module JutzParser =
         | Error err ->
             ParseError err
 
-    let reApplyX(re: string, s: string) = 
+    let reApplyXz(bMatchOnly)(re: string, s: string) = 
         // strips whitespace before applying a reg exp       
         match parseWhitespace(s) with 
         | ParseOK (_, remaining) -> 
-            match reApply(re, remaining) with 
+            match reApplyz bMatchOnly (re, remaining) with 
             | Ok maybeMatch, remaining' -> Ok maybeMatch, remaining'
             | (Error msg), remaining'-> Error msg, remaining'
         | _ -> 
             printfn "We should not be coming here a fail on whitespace should not happen"
             Ok None, s
+
+    let reApplyX(re: string, s: string) = 
+        reApplyXz false (re, s)
+    
 
     let parseNumber(s: string) =
         printfn "ParseNumber %s" s
@@ -445,7 +454,7 @@ module JutzParser =
     let parseFunctionName(s:string) =
     //^\((.+)\)
         let reString: string = sprintf @"^([A-Za-z0-9]+)\s*\(" //function name starts with alpha optionally continues with alphaNum and terminates with open parenthesis
-        let newValueResult, remaining = reApplyX(reString, s)
+        let newValueResult, remaining = reApplyX(reString, s) //remove whole match from remaining
         match newValueResult with 
         | Ok maybeFuncName -> 
         
@@ -457,53 +466,23 @@ module JutzParser =
                     
         | Error msg -> ParseError msg
 
-    let parseFunctionContents(s:string) =
-    //^\((.+)\)
-        let reString: string = sprintf @"^\((.+)\)"
-        let newValueResult, remaining = reApplyX(reString, s)
-        match newValueResult with 
-        | Ok maybeFuncName -> 
-        
-            match maybeFuncName with 
-            | None ->ParseOK (None, s)
 
-            | Some _str ->
-                ParseOK (maybeFuncName, remaining[.. remaining.Length -  1]) 
-                    
-        | Error msg -> ParseError msg
-
-    let parseElementSelection(s:string) =
+    let parseNodeName(s:string) =
         let reElement: string = sprintf @"^([A-Za-z0-9]+)"
         
         let newValueResult, remaining = reApplyX(reElement, s)
         match newValueResult with 
-        | Ok maybeNodeSelection -> 
+        | Ok maybeNodeName -> 
         
-            match maybeNodeSelection with 
+            match maybeNodeName with 
             | None -> ParseOK (None, s)
 
             | Some str ->
-                ParseOK (maybeNodeSelection, remaining)
+                ParseOK (maybeNodeName, remaining)
                     
         | Error msg -> ParseError msg
 
-    let parseAttributeSelection(s:string) =
-        let reAttribute: string = sprintf @"^(@[A-Za-z0-9]+)"
-        
-        let newValueResult, remaining = reApplyX(reAttribute, s)
-        match newValueResult with 
-        | Ok maybeNodeSelection -> 
-        
-            match maybeNodeSelection with 
-            | None -> ParseOK (None, s)
 
-            | Some str ->
-                let attrName = str[1..]
-                ParseOK (Some attrName, remaining)
-                    
-        | Error msg -> ParseError msg
-
-    
     let parseOpenWhere(s:string) =
         let reWhere: string = sprintf @"^(\[)"
         
@@ -536,22 +515,6 @@ module JutzParser =
         | Error msg -> ParseError msg
 
     
-    let parseOpenFunction(s:string) =
-        let reWhere: string = sprintf @"^(\[)"
-        
-        let newValueResult, remaining = reApplyX(reWhere, s)
-        match newValueResult with 
-        | Ok maybeWhere -> 
-        
-            match maybeWhere with 
-            | None -> ParseOK (None, s)
-
-            | Some _str ->
-                ParseOK (maybeWhere, remaining)
-                    
-        | Error msg -> ParseError msg
-
-    
     let parseCloseFunction(s:string) =
         let reWhere: string = sprintf @"^(\))"
         
@@ -568,16 +531,17 @@ module JutzParser =
         | Error msg -> ParseError msg
 
     let parseAxisChild(s:string) =
-        let reChild = "^(\/)[A-Za-z]"
-        let newValueResult, remaining = reApplyX(reChild, s)
+        let reChild = "^(\/@*)[A-Za-z]"
+        let newValueResult, remaining = reApplyXz true (reChild, s) //true to not throw away the match for [A-Za-z]
+        printfn "Remaining in parseAxisChild is %s" remaining
         match newValueResult with 
         | Ok maybeAxis -> 
         
             match maybeAxis with 
             | None -> ParseOK (None, s)
 
-            | Some _sstr ->
-                ParseOK (Some "", s[1..])
+            | Some axisStr ->
+                ParseOK (Some axisStr[1..], remaining)  // "" for child element "@" for child attribute
                     
         | Error msg -> ParseError msg
     
@@ -615,6 +579,7 @@ module JutzParser =
         let ss = parseAxisChild(s)
         match ss with
         | ParseOK (None, _remaining) ->
+            printfn "Parsing dot"
             parseAxisDot(s)
         | _ -> ss
 
@@ -648,60 +613,6 @@ module JutzParser =
                 ParseOK (maybeAxis, remaining[2..])//skip the :: characters 
                     
         | Error msg -> ParseError msg
-    
-        
-    let parseBrackets(bracketChars: char * char)(s:string) =
-        // we could replace all the reg exps with character parsing except that would probably look  more like the voice analyser
-        let openBracketChar = fst(bracketChars)
-        let closeBracketChar = snd(bracketChars)
-
-        let rec processString(chars: list<char>, bracketCount: int, acc: list<char>) =
-            match chars with 
-            | [] -> 
-                match bracketCount > 0 with 
-                | true -> 
-                    let msg = "Ran out of letters in parse Brackets - no closing bracket"
-                    printfn "%s" msg
-                    ParseError msg
-                
-                | false -> 
-                    printfn  "Empty string?"
-                    ParseOK (None, s) // an empty string must have been passed in to parseBrackets which would  be odd    
-            | c :: t -> 
-                match c with
-                | Eq openBracketChar ->
-                    match bracketCount with 
-                    | 0 -> processString(t, bracketCount + 1, acc) // don't capture the first opening bracket
-                    | _ -> processString(t, bracketCount + 1, '(' :: acc) // capture internal brackets
-                
-                | Eq closeBracketChar ->
-                    match bracketCount with 
-                    | 0 -> 
-                        let msg = "close bracket before open bracket"
-                        ParseError msg
-                    | 1 -> 
-                        let str = System.String.Concat(Array.ofList(List.rev acc))
-                        let remaining = System.String.Concat(Array.ofList(t))
-                        ParseOK (Some str, remaining) 
-                    | _ -> processString(t, bracketCount - 1, ')' :: acc)
-                
-                | _ ->
-                    match bracketCount = 0 with
-                    | true -> 
-                        printfn "First character is not a bracket: %c" c
-                        ParseOK (None, s)
-                    | false -> processString(t, bracketCount, c :: acc)
-                
-        match parseWhitespace(s) with 
-        | ParseOK (_, remaining) ->
-            printfn "Processing %s" remaining
-            let letters = remaining |> Seq.toList
-            processString(letters, 0, [])
-        | ParseError msg -> ParseError msg
-
-    let parseRoundBrackets = parseBrackets('(',')')
-    let parseSquareBrackets = parseBrackets('[',']')
-    let parseSquigglyBrackets = parseBrackets('{','}')
 
     let parseComparisonOperator(s:string) =
         let reOp = @"^(>=|>|<=|<|=)"
@@ -731,8 +642,9 @@ module JutzParser =
         | "." -> Some Axis.Self
         | ".." -> Some Axis.Parent
         | "self" -> Some Axis.Self
-        | "" -> Some Axis.Child
-        | "child" -> Some Axis.Child
+        | "" -> Some (Axis.Child NodeType.Element)
+        | "@" -> Some (Axis.Child NodeType.Attribute)
+        | "child" -> Some (Axis.Child NodeType.Element)
         | "descendant" -> Some Axis.Descendant
         | "ancestor" -> Some Axis.Ancestor
         | "parent" -> Some Axis.Parent
@@ -770,7 +682,7 @@ module JutzParser =
                             match axis' with 
                             // self and parent get node selectors of any
                             | Axis.Self | Axis.Parent ->
-                                let termAny = (JPTerm.NodeSelection {NodeName = NodeName.Any; NodeType = NodeType.Element})
+                                let termAny = (JPTerm.NodeName NodeName.Any)
                                 Ok (Some [termAxis; termAny], remaining') 
 
                             | _ -> 
@@ -790,23 +702,18 @@ module JutzParser =
     
         
                 
-    let tryParseNodeSelection(input: string) : Result<option<list<JPTerm>> * string, string> =
+    let tryParseNodeName(input: string) : Result<option<list<JPTerm>> * string, string> =
         let (res, remaining) =
-            match parseElementSelection(input) with
-            | ParseOK (None, _s) -> 
-                match parseAttributeSelection(input) with
-                | ParseError msg -> ((Error msg), input )
-                | ParseOK (None, _s) -> (Ok None, input)
-                | ParseOK (Some x, s) -> (Ok (Some(x, NodeType.Attribute)),s)
-            | ParseOK (Some x, s) -> (Ok (Some(x, NodeType.Element) ), s)
-
-            | ParseError msg -> (Error msg, input)
-
+            match parseNodeName(input) with
+            | ParseError msg -> ((Error msg), input )
+            | ParseOK (None, _s) -> (Ok None, input)
+            | ParseOK (Some x, s) -> (Ok (Some x), s)
+            
         match res with
         | Ok maybeMatch -> 
             match maybeMatch with 
-            | Some (nodeName, nodeType) ->                                
-                Ok (Some [JPTerm.NodeSelection {NodeName = (NodeName.NodeName nodeName); NodeType = nodeType}], remaining)
+            | Some nodeName ->                                
+                Ok (Some [JPTerm.NodeName (NodeName.NodeName nodeName)], remaining)
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
 
@@ -848,49 +755,7 @@ module JutzParser =
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
 
-    let tryParseXSLFunction(input: string) : Result<option<list<JPTerm>> * string, string> =
-        let (res, remaining) =
-            match parseElementSelection(input) with
-            | ParseOK (None, _s) -> 
-                match parseAttributeSelection(input) with
-                | ParseError msg -> ((Error msg), input )
-                | ParseOK (None, _s) -> (Ok None, input)
-                | ParseOK (Some x, s) -> (Ok (Some(x, NodeType.Attribute)),s)
-            | ParseOK (Some x, s) -> (Ok (Some(x, NodeType.Element) ), s)
-
-            | ParseError msg -> (Error msg, input)
-
-        match res with
-        | Ok maybeMatch -> 
-            match maybeMatch with 
-            | Some (nodeName, nodeType) ->                                
-                Ok (Some [JPTerm.NodeSelection {NodeName = (NodeName.NodeName nodeName); NodeType = nodeType}], remaining)
-            | None -> Ok (None, remaining)
-        | Error msg -> Error msg
-
-
-    let tryParseSelection(input: string) : Result<option<list<JPTerm>> * string, string> =
-        
-        let (res, remaining) =
-            match parseElementSelection(input) with
-            | ParseOK (None, _s) -> 
-                match parseAttributeSelection(input) with
-                | ParseError msg -> ((Error msg), input )
-                | ParseOK (None, _s) -> (Ok None, input)
-                | ParseOK (Some x, s) -> (Ok (Some(x, NodeType.Attribute)),s)
-            | ParseOK (Some x, s) -> (Ok (Some(x, NodeType.Element) ), s)
-
-            | ParseError msg -> (Error msg, input)
-
-        match res with
-        | Ok maybeMatch -> 
-            match maybeMatch with 
-            | Some (nodeName, nodeType) ->                                
-                Ok (Some [JPTerm.NodeSelection {NodeName = (NodeName.NodeName nodeName); NodeType = nodeType}], remaining)
-            | None -> Ok (None, remaining)
-        | Error msg -> Error msg
-
-
+    
     let tryParseWhereOpen(input: string) : Result<option<list<JPTerm>> * string, string> =
         
         let (res, remaining) =
@@ -936,28 +801,6 @@ module JutzParser =
     
 
 
-    let tryParseFunctionOpen(input: string) : Result<option<list<JPTerm>> * string, string> =
-        
-        let (res, remaining) =
-            match parseOpenFunction(input) with
-            | ParseOK (None, _s) -> 
-                 (Ok None, input)
-            | ParseOK (Some x, s) -> 
-                // at this point we have to gather terms for str and wrap that up in a JPTerm.Filter
-                // for the moment return a nodename set to this string to parse
-                Ok (Some x), s
-
-            | ParseError msg -> (Error msg, input)
-
-        match res with
-        | Ok maybeMatch -> 
-            match maybeMatch with 
-            | Some (_whereClause) ->                                
-                Ok (Some [JPTerm.OpenFilter], remaining)
-            | None -> Ok (None, remaining)
-        | Error msg -> Error msg
-
-
     let tryParseFunctionClose(input: string) : Result<option<list<JPTerm>> * string, string> =
         
         let (res, remaining) =
@@ -979,44 +822,6 @@ module JutzParser =
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
     
-
-    let tryParseElementSelection(input: string) : Result<option<list<JPTerm>> * string, string> =
-        
-        let (res, remaining) =
-            match parseElementSelection(input) with
-            | ParseOK (None, _s) -> 
-                 (Ok None, input)
-            | ParseOK (Some x, s) -> (Ok (Some(x, NodeType.Element) ), s)
-
-            | ParseError msg -> (Error msg, input)
-
-        match res with
-        | Ok maybeMatch -> 
-            match maybeMatch with 
-            | Some (nodeName, nodeType) ->                                
-                Ok (Some [JPTerm.NodeSelection {NodeName = (NodeName.NodeName nodeName); NodeType = nodeType}], remaining)
-            | None -> Ok (None, remaining)
-        | Error msg -> Error msg
-
-    
-
-    let tryParseAttributeSelection(input: string) : Result<option<list<JPTerm>> * string, string> =
-        
-        let (res, remaining) =
-            match parseAttributeSelection(input) with
-            | ParseOK (None, _s) -> 
-                 (Ok None, input)
-            | ParseOK (Some x, s) -> (Ok (Some(x, NodeType.Attribute) ), s)
-
-            | ParseError msg -> (Error msg, input)
-
-        match res with
-        | Ok maybeMatch -> 
-            match maybeMatch with 
-            | Some (nodeName, nodeType) ->                                
-                Ok (Some [JPTerm.NodeSelection {NodeName = (NodeName.NodeName nodeName); NodeType = nodeType}], remaining)
-            | None -> Ok (None, remaining)
-        | Error msg -> Error msg
 
     let tryParseComparisonOperator(input: string) =
         match parseComparisonOperator(input) with 
@@ -1285,7 +1090,7 @@ module JutzParser =
             // interface IAttribute
 
 
-    let getNodes({NodeName = nodeName; NodeType = nodeType}: NodeSelection)(nodes: list<INode>) : list<INode> =
+    let getChildNodes(nodeType: NodeType)(nodeName: NodeName)(nodes: list<INode>) : list<INode> =
         let fetchNodes = 
             match nodeType with
             | NodeType.Attribute -> 
@@ -1344,7 +1149,7 @@ module JutzParser =
         descendants(nodes, [])
     
     let getDescendants(nodeName: NodeName)(nodes: list<INode>) : list<INode> =
-        let childNodes = getNodes({NodeName=NodeName.Any; NodeType=NodeType.Element})(nodes)
+        let childNodes = getChildNodes NodeType.Element NodeName.Any nodes
         getDescendantsOrSelf nodeName childNodes
 
     
@@ -1426,20 +1231,12 @@ module JutzParser =
         }
         
     
-    // a wrapper  function so that all axis functions get passed NodeSelection though not  all axes need node type
-    let ff(g:NodeName -> list<INode> -> list<INode>) =
-        // for functions that only select Elements and do not need to distinguish on node type
-        fun (nodeSelection:NodeSelection) ->
-            g nodeSelection.NodeName
-                        
-    //This defines the arguments a function is expecting -for Axis child, just a node selection
-
     let composeSelectors(s1:Selector) (s2:Selector) =
         lift s1 s2
     
-    let makeAxisBuilder(axis:Axis, selector:NodeSelection -> list<INode>-> list<INode>) : FunctionBuilder =
+    let makeAxisBuilder(axis:Axis, selector:NodeName -> list<INode>-> list<INode>) : FunctionBuilder =
         {
-            InputTypes = [TermType.NodeSelection];
+            InputTypes = [TermType.NodeName];
             Inputs = [];            
             MaybeError = None;
             ApplyArg = fun(this, jpTerm) -> FunctionBuilder.applyArgDefault(this, jpTerm)
@@ -1448,8 +1245,8 @@ module JutzParser =
                 match inputs with
                 | jpTerm :: [] ->
                     match jpTerm with 
-                    | JPTerm.NodeSelection nodeSelection ->
-                        let f = selector nodeSelection
+                    | JPTerm.NodeName nodeName ->
+                        let f = selector nodeName
                         fun iNodes ->
                             f iNodes
                     | otherType -> 
@@ -1609,13 +1406,13 @@ module JutzParser =
             ]
         let builderMap = 
             [
-            (TermKey.Axis Axis.Child, makeAxisBuilder (Axis.Child, getNodes))
-            (TermKey.Axis Axis.Parent, makeAxisBuilder (Axis.Parent, ff getParent))
-            (TermKey.Axis Axis.Ancestor, makeAxisBuilder (Axis.Ancestor, ff getAncestors))
-            (TermKey.Axis Axis.AncestorOrSelf, makeAxisBuilder (Axis.AncestorOrSelf, ff getAncestorsOrSelf))
-            (TermKey.Axis Axis.Descendant, makeAxisBuilder (Axis.Descendant, ff getDescendants))
-            (TermKey.Axis Axis.DescendantOrSelf, makeAxisBuilder (Axis.DescendantOrSelf, ff getDescendantsOrSelf))
-            (TermKey.Axis Axis.Self, makeAxisBuilder (Axis.Self, ff getSelf))
+            (TermKey.Axis (Axis.Child NodeType.Element), makeAxisBuilder (Axis.Child NodeType.Element, getChildNodes NodeType.Element))
+            (TermKey.Axis Axis.Parent, makeAxisBuilder (Axis.Parent, getParent))
+            (TermKey.Axis Axis.Ancestor, makeAxisBuilder (Axis.Ancestor, getAncestors))
+            (TermKey.Axis Axis.AncestorOrSelf, makeAxisBuilder (Axis.AncestorOrSelf, getAncestorsOrSelf))
+            (TermKey.Axis Axis.Descendant, makeAxisBuilder (Axis.Descendant, getDescendants))
+            (TermKey.Axis Axis.DescendantOrSelf, makeAxisBuilder (Axis.DescendantOrSelf, getDescendantsOrSelf))
+            (TermKey.Axis Axis.Self, makeAxisBuilder (Axis.Self, getSelf))
             (TermKey.TermType TermType.OpenFilter, filterDelegator())
             // (TermKey.TermType TermType.NodeSelection, XPTerm.Value )
             ] |> Map.ofList
@@ -1716,14 +1513,11 @@ module JutzParser =
 
         let tryEverything = 
                 tryParseAxes 
-            >=> tryParseElementSelection 
-            >=> tryParseAttributeSelection 
+            >=> tryParseFunctionName    //do this before trying for NodeName.  Includes opening bracket
+            >=> tryParseNodeName 
             >=> tryParseWhereOpen
             >=> tryParseWhereClose
-            >=> tryParseFunctionOpen
             >=> tryParseFunctionClose 
-            >=> tryParseFunctionName
-            // >=> tryParseFunctionContents 
             >=> tryParseComparisonOperator
             >=> tryParseConstant
 
