@@ -118,19 +118,37 @@ module JutzParser =
     | ConstantValue of ConstantValue //tryParseConstant
     | OpenFilter
     | CloseFilter
+    | CloseFunction
 
     // synthesised during building so perhaps an XPTerm
     | Selector of Selector
     with
         member this.getTermType() : TermType =
+            // this is necessary because JPTerm.Axis is not a thing on its own
             match this with
-            | JPTerm.Axis _ -> TermType.Axis
-            | _ -> TermType.NodeName //this section needs expanding for filters? tk
+            | Axis _ -> TermType.Axis
+            | NodeName _-> TermType.NodeName
+            | Selector _-> TermType.Selector
+            | FunctionName _-> TermType.FunctionName
+            | ComparisonOp _-> TermType.ComparisonOp
+            | ConstantValue _-> TermType.ConstantValue
+            | OpenFilter -> TermType.OpenFilter
+            | CloseFilter -> TermType.CloseFilter
+            | CloseFunction -> TermType.CloseFunction
+
         member this.getTermKey() =
             match this with
-            | JPTerm.Axis axis -> 
-                TermKey.Axis axis
-            | _ -> TermKey.TermType TermType.NodeName   //this needs expanding tk
+            | JPTerm.Axis axis -> TermKey.Axis axis
+            | JPTerm.CloseFilter _ -> TermKey.TermType TermType.CloseFilter
+            | JPTerm.CloseFunction _ -> TermKey.TermType TermType.CloseFunction
+            | JPTerm.ComparisonOp _ -> TermKey.TermType TermType.ComparisonOp
+            | JPTerm.ConstantValue _ -> TermKey.TermType TermType.ConstantValue
+            | JPTerm.FunctionName _ -> TermKey.TermType TermType.FunctionName
+            | JPTerm.NodeName _ -> TermKey.TermType TermType.NodeName
+            | JPTerm.OpenFilter _ -> TermKey.TermType TermType.OpenFilter
+            | JPTerm.Selector _ -> TermKey.TermType TermType.Selector
+        
+        //is this used?  idea was to reurn the set of inputs required by function builders
         member this.getInputs() : list<TermType> =
             match this with
             | JPTerm.Axis _ -> [TermType.NodeName]
@@ -173,6 +191,8 @@ module JutzParser =
         | ConstantValue
         | OpenFilter
         | CloseFilter
+        | CloseFunction
+
 
 
     and  [<RequireQualifiedAccessAttribute>]
@@ -277,6 +297,32 @@ module JutzParser =
     let singleQuote =  '\'' 
 
     
+    let parseInt16 (s:string) : option<int16> = 
+        match System.Int16.TryParse(s) with 
+        | true, n -> Some n
+        | _ -> None
+
+    let parseInt32 (s:string) : option<int32> = 
+        match System.Int32.TryParse(s) with 
+        | true, n -> Some n
+        | _ -> None
+
+    let parseInt64 (s:string) : option<int64> = 
+        match System.Int64.TryParse(s) with 
+        | true, n -> Some n
+        | _ -> None
+
+    let parseFloat32 (s:string) : option<float32> = 
+        match System.Single.TryParse(s) with 
+        | true, n -> Some n
+        | _ -> None
+    
+    
+    let parseFloat64 (s:string) : option<float> = 
+        match System.Double.TryParse(s) with 
+        | true, n -> Some n
+        | _ -> None
+   
     let composeParsers(f1: string -> Result<Option<list<JPTerm>> * string, string>) (f2: string -> Result<option<list<JPTerm>> * string, string>) =
         // composeParsers strings parsers together but is equivalent to oneOf in that it returns after the first successful parse
         fun(inputStr: string)  ->
@@ -340,27 +386,31 @@ module JutzParser =
 
     let parseWhitespace(s: string)  =
         let reWhitespace: string = @"^\s+"
-        let newValueResult, remaining = reApply(reWhitespace, s)  
+        let newValueResult, remaining = reApplyz false (reWhitespace, s)  
         match newValueResult with 
         | Ok maybeNewValue ->
             ParseOK (maybeNewValue, remaining)
         | Error err ->
             ParseError err
+    
+    let stripLeadingWhitespace(str:string) =
+        match parseWhitespace(str) with 
+        | ParseOK (_, remaining) -> 
+            remaining
+        | _ -> 
+            printfn "We should not be failing on stripping whitespace"
+            str
 
     let reApplyXz(bMatchOnly)(re: string, s: string) = 
-        // strips whitespace before applying a reg exp       
-        match parseWhitespace(s) with 
-        | ParseOK (_, remaining) -> 
-            match reApplyz bMatchOnly (re, remaining) with 
-            | Ok maybeMatch, remaining' -> Ok maybeMatch, remaining'
-            | (Error msg), remaining'-> Error msg, remaining'
-        | _ -> 
-            printfn "We should not be coming here a fail on whitespace should not happen"
-            Ok None, s
+        // strips whitespace before applying a reg exp  
+        let remaining = stripLeadingWhitespace(s)
+        printfn "After stripping whitespace(%s)" remaining
+        match reApplyz bMatchOnly (re, remaining) with 
+        | Ok maybeMatch, remaining' -> Ok maybeMatch, remaining'
+        | (Error msg), remaining'-> Error msg, remaining'
 
     let reApplyX(re: string, s: string) = 
         reApplyXz false (re, s)
-    
 
     let parseNumber(s: string) =
         printfn "ParseNumber %s" s
@@ -453,7 +503,7 @@ module JutzParser =
 
     let parseFunctionName(s:string) =
     //^\((.+)\)
-        let reString: string = sprintf @"^([A-Za-z0-9]+)\s*\(" //function name starts with alpha optionally continues with alphaNum and terminates with open parenthesis
+        let reString: string = sprintf @"^\/([A-Za-z0-9]+)\s*\(" //function name starts with alpha optionally continues with alphaNum and terminates with open parenthesis
         let newValueResult, remaining = reApplyX(reString, s) //remove whole match from remaining
         match newValueResult with 
         | Ok maybeFuncName -> 
@@ -468,7 +518,7 @@ module JutzParser =
 
 
     let parseNodeName(s:string) =
-        let reElement: string = sprintf @"^([A-Za-z0-9]+)"
+        let reElement: string = sprintf @"^([A-Za-z][A-Za-z0-9]*)"  //node names must start with letter
         
         let newValueResult, remaining = reApplyX(reElement, s)
         match newValueResult with 
@@ -750,7 +800,15 @@ module JutzParser =
         | Ok maybeMatch -> 
             match maybeMatch with 
             | Some (c) ->
-                Ok (Some [JPTerm.ConstantValue {DataType = DataType.String; Value = c}], remaining)
+                let dt =
+                    match parseInt64(c) with
+                    | Some f -> DataType.Integer
+                    | None ->
+                        match parseFloat32(c) with
+                        | Some f -> DataType.Float
+                        | None -> DataType.String
+                    
+                Ok (Some [JPTerm.ConstantValue {DataType = dt; Value = c}], remaining)
                 // here we need to process the contents of the function and wrap that in a JPTerm ... or something
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
@@ -772,8 +830,16 @@ module JutzParser =
         match res with
         | Ok maybeMatch -> 
             match maybeMatch with 
-            | Some (_whereClause) ->                                
-                Ok (Some [JPTerm.OpenFilter], remaining)
+            | Some (_openBracket) ->      
+                //prefix new scope with / Note that this may impact functionName 
+                // also note that we will have to do this after comparison operator   
+                let remaining' = 
+                    let r = stripLeadingWhitespace(remaining)
+                    match r[0..0] with
+                    | Eq @"/" -> r
+                    | _ -> "/" + r
+
+                Ok (Some [JPTerm.OpenFilter], remaining')
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
 
@@ -841,9 +907,15 @@ module JutzParser =
 
                 match maybeOp with 
                 | Some binOp -> 
+
+                    let remaining' = 
+                        let r = stripLeadingWhitespace(remaining)
+                        match r[0..0] with
+                        | Eq @"/" -> r
+                        | _ -> "/" + r
+
                     Ok (Some [JPTerm.ComparisonOp binOp], remaining)
                 | None -> Ok(None, input)
-
 
             | None ->
                 Ok (None, input)
@@ -944,32 +1016,6 @@ module JutzParser =
 
             (status, ParseRequest.CancelParse)
 
-    let parseInt16 (s:string) : option<int16> = 
-        match System.Int16.TryParse(s) with 
-        | true, n -> Some n
-        | _ -> None
-
-    let parseInt32 (s:string) : option<int32> = 
-        match System.Int32.TryParse(s) with 
-        | true, n -> Some n
-        | _ -> None
-
-    let parseInt64 (s:string) : option<int64> = 
-        match System.Int64.TryParse(s) with 
-        | true, n -> Some n
-        | _ -> None
-
-    let parseFloat32 (s:string) : option<float32> = 
-        match System.Single.TryParse(s) with 
-        | true, n -> Some n
-        | _ -> None
-    
-    
-    let parseFloat64 (s:string) : option<float> = 
-        match System.Double.TryParse(s) with 
-        | true, n -> Some n
-        | _ -> None
-   
    
     
     let inline eq<'T when 'T: equality>(t1:'T) (t2:'T) = 
@@ -1166,8 +1212,6 @@ module JutzParser =
             ) acc
         ) []
 
-        
-        
     let getAncestorsOrSelf(nodeName: NodeName)(nodes: list<INode>) : list<INode> =
         // this also mangles document order review tk - possibly we add child then all its children
         // so perhaps we only need to reverse the list before returning - this would be for a depth first order
@@ -1234,7 +1278,7 @@ module JutzParser =
     let composeSelectors(s1:Selector) (s2:Selector) =
         lift s1 s2
     
-    let makeAxisBuilder(axis:Axis, selector:NodeName -> list<INode>-> list<INode>) : FunctionBuilder =
+    let makeAxisBuilder(selector:NodeName -> list<INode>-> list<INode>) : FunctionBuilder =
         {
             InputTypes = [TermType.NodeName];
             Inputs = [];            
@@ -1331,7 +1375,7 @@ module JutzParser =
 
     and comparisonFilterBuilder() : FunctionBuilder =
         {
-            InputTypes = [TermType.OpenFilter; TermType.Selector; TermType.ComparisonOp; TermType.Selector; TermType.CloseFilter];
+            InputTypes = [TermType.Selector; TermType.ComparisonOp; TermType.Selector; TermType.CloseFilter];
             Inputs = [];
             MaybeError = None;
             ApplyArg = fun(this, jpTerm) -> FunctionBuilder.applyArgDefault(this, jpTerm)
@@ -1406,13 +1450,14 @@ module JutzParser =
             ]
         let builderMap = 
             [
-            (TermKey.Axis (Axis.Child NodeType.Element), makeAxisBuilder (Axis.Child NodeType.Element, getChildNodes NodeType.Element))
-            (TermKey.Axis Axis.Parent, makeAxisBuilder (Axis.Parent, getParent))
-            (TermKey.Axis Axis.Ancestor, makeAxisBuilder (Axis.Ancestor, getAncestors))
-            (TermKey.Axis Axis.AncestorOrSelf, makeAxisBuilder (Axis.AncestorOrSelf, getAncestorsOrSelf))
-            (TermKey.Axis Axis.Descendant, makeAxisBuilder (Axis.Descendant, getDescendants))
-            (TermKey.Axis Axis.DescendantOrSelf, makeAxisBuilder (Axis.DescendantOrSelf, getDescendantsOrSelf))
-            (TermKey.Axis Axis.Self, makeAxisBuilder (Axis.Self, getSelf))
+            (TermKey.Axis (Axis.Child NodeType.Element), makeAxisBuilder (getChildNodes NodeType.Element))
+            (TermKey.Axis (Axis.Child NodeType.Attribute), makeAxisBuilder (getChildNodes NodeType.Attribute))
+            (TermKey.Axis Axis.Parent, makeAxisBuilder (getParent))
+            (TermKey.Axis Axis.Ancestor, makeAxisBuilder (getAncestors))
+            (TermKey.Axis Axis.AncestorOrSelf, makeAxisBuilder (getAncestorsOrSelf))
+            (TermKey.Axis Axis.Descendant, makeAxisBuilder (getDescendants))
+            (TermKey.Axis Axis.DescendantOrSelf, makeAxisBuilder (getDescendantsOrSelf))
+            (TermKey.Axis Axis.Self, makeAxisBuilder (getSelf))
             (TermKey.TermType TermType.OpenFilter, filterDelegator())
             // (TermKey.TermType TermType.NodeSelection, XPTerm.Value )
             ] |> Map.ofList
@@ -1454,35 +1499,17 @@ module JutzParser =
             ApplyArg = fun(this, jpTerm) -> 
                 match jpTerm with
                 
-                | JPTerm.OpenFilter ->
-                    match this.Inputs with
-                    | [] ->
-                        ApplyArgResult.Incomplete {this with Inputs = [jpTerm]}
-                    | _ -> 
-                        let msg = sprintf "Error: expected one of Selector or functionName but got %A" jpTerm
-                        ApplyArgResult.Error msg
-
+                | JPTerm.Selector _ ->
+                    // comparison builder - we don't have any existing terms to copy over, just the one that has come in
+                    let cb = comparisonFilterBuilder()
+                    cb.applyArg(jpTerm)
+                    
                 | JPTerm.FunctionName _functionName ->
                     ApplyArgResult.Error "Not implemented yet tbd tk"
 
-                | _ -> 
-                    match this.Inputs with
-                    | h :: [] ->
-                        let cb = comparisonFilterBuilder()
-                        let fb' = cb.applyArg(h) 
-                        match fb' with 
-                        | ApplyArgResult.Incomplete fb ->
-                                fb.applyArg(jpTerm) 
-                        | ApplyArgResult.Complete _fb ->
-                            let msg = sprintf "Error: Not expecting comparisonFilterBuilder to be complete%A" jpTerm
-                            ApplyArgResult.Error msg
-                    
-                        | ApplyArgResult.Error msg ->
-                            ApplyArgResult.Error msg
-                    
-                    | _ -> 
-                        let msg = sprintf "Unexpected number of inputs in filterDelegator %d %A" this.Inputs.Length jpTerm
-                        ApplyArgResult.Error msg
+                | _ ->                    
+                    let msg = sprintf "Unexpected number of inputs in filterDelegator %d %A" this.Inputs.Length jpTerm
+                    ApplyArgResult.Error msg
 
             MakeFunction = fun(inputs) ->   //this function is called via FunctionBuilder.makeFunction which passes in inputs list                
                 printfn "This function should not be called.  Filter delegator should have delegated (we should return a result here tk)"

@@ -35,19 +35,18 @@ let s = "'CDT158' / 'Sinusoid' * 100"
 //     printfn "%s" e
 //-----------------------------
 
-let xPath = "./station/pump/@pressure"
+let xPath = "./pump[@pressure = 1]"
+// let xPath = "./pump/@pressure"
 let jpTermsResult = Parser.JutzParser.parseExpression(xPath)
 match jpTermsResult with
 | Ok jpTerms ->
     printfn  "Successful parse - %A" jpTerms
-    if 1 = 0 then
+    if 1 = 1 then
         printfn "attempting compile"
         let cc = Parser.JutzParser.compileXPathFromTerms(jpTerms)
         printfn "%A" cc
 | Error err ->
     printfn "%s" err
-
-
         
 
 ignore <| System.Console.ReadLine()
