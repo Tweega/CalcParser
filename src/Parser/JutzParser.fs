@@ -119,11 +119,11 @@ module JutzParser =
     // | BinaryComparison of BinaryComparison
     | ComparisonOp of ComparisonOp // tryParseBinaryOperator
     | ConstantValue of ConstantValue //tryParseConstant
+    | OpenFilter
+    | CloseFilter
 
     // synthesised during building so perhaps an XPTerm
     | Selector of Selector
-    | OpenFilter
-    | CloseFilter
     with
         member this.getTermType() : TermType =
             match this with
@@ -1442,7 +1442,7 @@ module JutzParser =
             InputTypes = [TermType.NodeSelection];
             Inputs = [];            
             MaybeError = None;
-            ApplyArg = fun(this, jpTerm) -> this.applyArg(jpTerm)
+            ApplyArg = fun(this, jpTerm) -> FunctionBuilder.applyArgDefault(this, jpTerm)
             MakeFunction = fun(inputs) ->
                 // inputs will already have been validated via applyArg
                 match inputs with
@@ -1537,7 +1537,7 @@ module JutzParser =
             InputTypes = [TermType.OpenFilter; TermType.Selector; TermType.ComparisonOp; TermType.Selector; TermType.CloseFilter];
             Inputs = [];
             MaybeError = None;
-            ApplyArg = fun (this, jpTerm) -> this.applyArg(jpTerm)
+            ApplyArg = fun(this, jpTerm) -> FunctionBuilder.applyArgDefault(this, jpTerm)
             MakeFunction = fun(inputs) ->   //this function is called via FunctionBuilder.makeFunction which passes in inputs list
                 // inputs will already have been validated via applyArg
                 match inputs with
@@ -1752,16 +1752,15 @@ module JutzParser =
 
         let g:Result<list<JPTerm> * string, string> = f(Ok ([], expr'))
         match g with
-        | Ok (terms, remaining) ->
+        | Ok (terms, _remaining) ->
+            let jpTerms =
+                terms |>
+                List.rev
             printfn "Successful parse"
+            Ok jpTerms
         | Error err ->
             printfn "%s" err
-
-
-            
-
-            
-        printfn "%A" g
+            Error err
 
 
 
