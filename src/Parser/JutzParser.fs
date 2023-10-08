@@ -1652,3 +1652,47 @@ module JutzParser =
         printfn "%A" exprRes
 
     // parseConstant("'hello' there")
+
+
+    // type UpdateFn = INode -> INode
+
+    // let rec updateTree pred updateFn iNode =
+    //     match (iNode:INode) with
+    //     | :? ElementNode as el ->
+    //         printfn "el"
+    //     | :? AttributeNode as attr ->
+    //         printfn "atr"
+    //     | _ -> printfn "wtf?"
+
+    //         let updatedChildren = children |> List.map (updateTree pred updateFn)
+    //         if pred name then 
+    //             Element(updateFn name, updatedChildren)
+    //         else 
+    //             Element(name, updatedChildren)
+
+
+
+
+    type Node = 
+        | Element of string * list<Node>
+
+    let rec updateTree pred updateFn node =
+        match node with
+        | Element(name, children) ->
+            let updatedChildren = children |> List.map (updateTree pred updateFn)
+            if pred name then 
+                Element(updateFn name, updatedChildren)
+            else 
+                Element(name, updatedChildren)
+
+    let tree = 
+        Element("root", 
+            [
+                Element("a", []);
+                Element("b", [Element("c", [])]);
+                Element("d", [Element("e", [Element("f", [])])])
+            ])
+    let shouldUpdate name = name = "b" || name = "e"
+    let updateFn name = name + "_updated"
+
+    let updatedTree = updateTree shouldUpdate updateFn tree

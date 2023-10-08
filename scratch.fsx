@@ -334,6 +334,30 @@ let gg key = (fun e -> Map.find key e.AttributeMap)
 open FSharpPlus
 open FSharpPlus.Data
 
+// val inline lens:
+//    getter: ('s -> 'a) ->  1) the getter takes a container object ('s) and finds the part that needs updating ('a)
+//    setter: ('s -> 'b -> 't) -> 1a) we also apply the container object 's to the setter. This gives us a 'b -> 't
+//    f     : ('a -> ^F<'b>) -> 2) the transformer function, transforms the 'a into an instance of a Functor on 'b
+// the partially applied setter function is handed to the Map function of the functor giving us an F<'t>
+//    s     : 's //  start theball rolling by providing the container object 's
+//         -> 'F<'t>
+//  the view function unwraps F<'t> to return 't
+// the  setl function 
+
+
+// val inline lens:
+//    getter: ('container -> 'part) ->  1) the getter takes a container object ('s) and finds the part that needs updating ('a)
+//    setter: ('container -> 'newValue -> 'partParent) -> 1a) we also apply the container object 's to the setter. This gives us a 'b -> 't
+//    f     : ('part -> ^F<'newValue>) -> 2) the transformer function, transforms the 'a into an instance of a Functor on 'b
+// the partially applied setter function is handed to the Map function of the functor giving us an F<'t>
+//    s     : 'container //  start theball rolling by providing the container object 's
+//         -> 'F<'partParent>
+//  the view function unwraps F<'t> to return 't
+// the  setl function provides Functor Identity
+// when you call view providing getter and setter
+
+
+
 let attributeLens key =
     let getter (e: ElementNode) = Map.tryFind key e.AttributeMap
     let setter (e: ElementNode) (v: AttributeNode option) =
@@ -448,3 +472,6 @@ let setCreditCardPostcode (postcode: Postcode): User -> User =
         
     constPostCode (fun _ -> postcode)
 
+
+let tuple = (1,2)
+let l = tuple.to

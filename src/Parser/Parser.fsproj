@@ -9,7 +9,12 @@
     <Compile Include="ParserTypes.fs" />
     <Compile Include="Parser.fs" />
     <!-- <Compile Include="scratch.fsx" /> -->
+    <Compile Include="AF.fsx" />
     <Compile Include="JutzParser.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharpPlus" Version="1.4.1" />
   </ItemGroup>
 
 </Project>

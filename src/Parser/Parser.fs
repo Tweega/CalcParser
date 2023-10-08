@@ -3,7 +3,8 @@
 module CalcParser =
     open ParserTypes
     open System.Text.RegularExpressions
-
+    open FSharpPlus.Lens
+    open FSharpPlus.Data
     
     [<RequireQualifiedAccessAttribute>]
     type TermType =
@@ -11,7 +12,17 @@ module CalcParser =
     | String of string
 
     let quot = '\u0022'    
+
+    type SimpleType = {
+        SimpleName:string
+    }
     
+
+    let test () = 
+        let hh : Identity<SimpleType> = Identity {SimpleName="John"}
+        hh
+
+
     let composeParsers(f1: string -> Result<Option<TypedTerm> * string, string>) (f2: string -> Result<option<TypedTerm> * string, string>) =
         // composeParsers strings parsers together but is equivalent to oneOf in that it returns after the first successful parse
         fun(inputStr: string)  ->

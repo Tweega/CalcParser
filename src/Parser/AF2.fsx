@@ -61,11 +61,11 @@ let lensForSampleAttr = attributeValueLens "sampleAttr"
 let getValueThroughLens attrName s = view (attributeValueLens attrName) s
 let setAttributeThroughLens attrName newValue (s:option<ElementNode>) = setl (attributeValueLens attrName) newValue s
   
-let initialValue = getValueThroughLens "sampleAttr" sampleNode  // This should yield Some "initialValue"
+let initialValue = getValueThroughLens "sampleAttr" (Some sampleNode)  // This should yield Some "initialValue"
 
-let updatedNode = setAttributeThroughLens sampleNode "sampleAttr" (Some "newValue")
+let updatedNode = setAttributeThroughLens "sampleAttr" "newValue" (Some sampleNode)
 
-let newAttributeValue = getValueThroughLens updatedNode  // This should yield Some "newValue"
+let newAttributeValue = getValueThroughLens "sampleAttr" updatedNode  // This should yield Some "newValue"
 
 
 
@@ -80,9 +80,9 @@ let inline elementLens elementName =
 
 
 //lenses are inline as they either return a container or a part depending on the Functor ie Const (view) or Identity (setl)
-let inline _address f card =
-        f card.Address
-        <&> fun address -> { card with Address = address }
+// let inline _address f card =
+//         f card.Address
+//         <&> fun address -> { card with Address = address }
 
 
 // the f function creates Functor from part
@@ -93,7 +93,7 @@ let inline _element elemName f (maybeElement:option<ElementNode>) =
         | Some childEl -> 
             let functor = f childEl
             functor <&> fun childElem -> 
-                let newMap = Map.add elemName elem containerEl.ElementMap
+                let newMap = Map.add elemName childElem containerEl.ElementMap
                 
                 Some {containerEl with ElementMap = newMap}
         | None -> None
@@ -118,21 +118,14 @@ let setElementThroughLens elementContainer elementName newElement = setl (elemen
 let jj elementContainer elementName  = 
     let ff = setElementThroughLens elementContainer elementName
     let gg = setAttributeThroughLens "some attr" "Some new value"
-    let hh = ff >> gg
-    let y = 3
+    ff >> gg
 
-    // let dd = 
 
-let cc = ((setElementThroughLens) >=> setAttributeThroughLens)
+// I want away to locate a node though the question of whether data binding is a better approach is still mute
+// especially client side where there is only the one user
 
-let childLens = setl (elementLens "ChildElement")
-let childLens2 = elementLens "ChildElement"
+type UpdateFn = INode -> Node
 
-// Composing the lenses to access the nested attribute value inside "ChildElement"
-let composedLens = childLens >=> lensForSampleAttr
 
-let nestedInitialValue = view composedLens parentSampleNode // This should yield Some "initialValue"
 
-let updatedParentNode = setl composedLens (Some "newNestedValue") parentSampleNode
 
-let newNestedAttributeValue = view composedLens updatedParentNode // This should yield Some "newNestedValue"
