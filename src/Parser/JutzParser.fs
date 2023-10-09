@@ -71,6 +71,18 @@ module JutzParser =
         Value: string;
     }
 
+    type MyConst<'T> =
+        | MyConst of  'T
+        with
+        member __.map(_f: 'T -> _) (t: 'T) :  MyConst<'T> =
+            MyConst t
+        
+    
+    type MyIdentity<'T> =
+        | MyIdentity of  'T
+        with
+        member __.map(f: 'T -> 'U) (t: 'T) :  MyIdentity<'U> =
+            MyIdentity (f t)
     
     type INode =
         abstract getElementNodes : unit -> list<INode>
@@ -94,7 +106,7 @@ module JutzParser =
         // abstract bind : ('T -> list<'U>) * 'T -> list<'U>
 
     // we could add starting position in the original parse string to indicate where failure is tk
-    // JutzPath terms reflect the basicunitsof parsing from XPath strings
+    // JutzPath terms reflect the basic units of parsing from XPath strings
     //              
     //         >=>  
     //         >=>  
@@ -914,7 +926,7 @@ module JutzParser =
                         | Eq @"/" -> r
                         | _ -> "/" + r
 
-                    Ok (Some [JPTerm.ComparisonOp binOp], remaining)
+                    Ok (Some [JPTerm.ComparisonOp binOp], remaining')
                 | None -> Ok(None, input)
 
             | None ->
@@ -1141,7 +1153,7 @@ module JutzParser =
             match nodeType with
             | NodeType.Attribute -> 
                 fun(iNode:INode) -> 
-                    iNode.getAttributeNodes()
+                    iNode.getAttributeNodes()   //assuming that we are allowing nested attributes
             | NodeType.Element ->
                 fun(iNode:INode) -> 
                     iNode.getElementNodes()
