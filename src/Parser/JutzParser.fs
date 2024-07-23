@@ -825,7 +825,12 @@ module JutzParser =
             | None -> Ok (None, remaining)
         | Error msg -> Error msg
 
-    
+    let dotPrefix(s:string) =
+        match s[0..0] with
+        | Eq @"." -> "/" + s
+        | Eq @"@" -> "/" + s
+        | _ -> s
+
     let tryParseWhereOpen(input: string) : Result<option<list<JPTerm>> * string, string> =
         
         let (res, remaining) =
@@ -846,10 +851,8 @@ module JutzParser =
                 //prefix new scope with / Note that this may impact functionName 
                 // also note that we will have to do this after comparison operator   
                 let remaining' = 
-                    let r = stripLeadingWhitespace(remaining)
-                    match r[0..0] with
-                    | Eq @"/" -> r
-                    | _ -> "/" + r
+                    dotPrefix(stripLeadingWhitespace(remaining))
+                    
 
                 Ok (Some [JPTerm.OpenFilter], remaining')
             | None -> Ok (None, remaining)
@@ -921,10 +924,7 @@ module JutzParser =
                 | Some binOp -> 
 
                     let remaining' = 
-                        let r = stripLeadingWhitespace(remaining)
-                        match r[0..0] with
-                        | Eq @"/" -> r
-                        | _ -> "/" + r
+                        dotPrefix(stripLeadingWhitespace(remaining))
 
                     Ok (Some [JPTerm.ComparisonOp binOp], remaining')
                 | None -> Ok(None, input)
@@ -1147,6 +1147,7 @@ module JutzParser =
             
             // interface IAttribute
 
+        
 
     let getChildNodes(nodeType: NodeType)(nodeName: NodeName)(nodes: list<INode>) : list<INode> =
         let fetchNodes = 
@@ -1166,6 +1167,14 @@ module JutzParser =
                 i' :: acc'
             ) acc
         ) []
+
+    let rec getChildNodesRec(nodeType: NodeType)(nodeName: NodeName)(nodes: list<INode>) : list<INode> =
+        printfn "Way in"
+        let jj = getChildNodes nodeType nodeName nodes
+        printfn "Way OUT"
+        jj
+
+
 
     let getSelf(nodeName: NodeName)(nodes: list<INode>) : list<INode> =
         match nodeName with 
@@ -1489,8 +1498,8 @@ module JutzParser =
             ]
         let builderMap = 
             [
-            (TermKey.Axis (Axis.Child NodeType.Element), makeAxisBuilder (getChildNodes NodeType.Element))
-            (TermKey.Axis (Axis.Child NodeType.Attribute), makeAxisBuilder (getChildNodes NodeType.Attribute))
+            (TermKey.Axis (Axis.Child NodeType.Element), makeAxisBuilder (getChildNodesRec NodeType.Element))
+            (TermKey.Axis (Axis.Child NodeType.Attribute), makeAxisBuilder (getChildNodesRec NodeType.Attribute))
             (TermKey.Axis Axis.Parent, makeAxisBuilder (getParent))
             (TermKey.Axis Axis.Ancestor, makeAxisBuilder (getAncestors))
             (TermKey.Axis Axis.AncestorOrSelf, makeAxisBuilder (getAncestorsOrSelf))
@@ -1600,12 +1609,9 @@ module JutzParser =
         // or do we know that scope has  finished once we resolve a selector
 
         // prefix with / if not already starting with one - this rules out a pure constant tk
-        // it requires that an XPath string alwaysbegins with a node selection
-        // which may be fair enough
-        let expr' =
-            match expr[0..0] with
-            | Eq @"/" -> expr
-            | _ -> "/" + expr
+        // it requires that an XPath string always begins with a node selection
+        // which is not the case with constants. is it only dot paths that require the slash - it is also @
+        let expr' = dotPrefix(expr)            
 
         let tryEverything = 
                 tryParseAxes 
