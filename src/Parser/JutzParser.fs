@@ -151,13 +151,13 @@ module JutzParser =
         member this.getTermKey() =
             match this with
             | JPTerm.Axis axis -> TermKey.Axis axis
-            | JPTerm.CloseFilter _ -> TermKey.TermType TermType.CloseFilter
-            | JPTerm.CloseFunction _ -> TermKey.TermType TermType.CloseFunction
+            | JPTerm.CloseFilter -> TermKey.TermType TermType.CloseFilter
+            | JPTerm.CloseFunction -> TermKey.TermType TermType.CloseFunction
             | JPTerm.ComparisonOp _ -> TermKey.TermType TermType.ComparisonOp
             | JPTerm.ConstantValue _ -> TermKey.TermType TermType.ConstantValue
             | JPTerm.FunctionName _ -> TermKey.TermType TermType.FunctionName
             | JPTerm.NodeName _ -> TermKey.TermType TermType.NodeName
-            | JPTerm.OpenFilter _ -> TermKey.TermType TermType.OpenFilter
+            | JPTerm.OpenFilter -> TermKey.TermType TermType.OpenFilter
             | JPTerm.Selector _ -> TermKey.TermType TermType.Selector
         
         //is this used?  idea was to reurn the set of inputs required by function builders

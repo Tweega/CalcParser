@@ -14,7 +14,7 @@
             "type": "coreclr",
             "request": "launch",
             "preLaunchTask": "build",
-            "program": "${workspaceFolder}/src/App/bin/Debug/net6.0/App.dll",
+            "program": "${workspaceFolder}/src/App/bin/Debug/net8.0/App.dll",
             "args": [],
             "cwd": "${workspaceFolder}/src/App",
             "console": "internalConsole",

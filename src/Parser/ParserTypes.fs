@@ -54,6 +54,7 @@ module ParserTypes =
     type DataType = 
     | Numeric
     | String
+    | Boolean
     | Unknown
 
     // | Boolean?
@@ -101,19 +102,19 @@ module ParserTypes =
     type CalcOp<'T> = OpFunc<'T> * DataQueue * DataQueue  //make into a record?
 
     type ParseResult = 
-        | ParseOK of option<string> * string //text matching re, remaining string to parse, accumulator
+        | ParseOK of option<string> * string //text matching re, remaining string to parse
         | ParseError of string
 
-        type Unary = 
-            | Unary of BinaryOperator
-            static member Combine(unaryA: Unary, unaryB: Unary) = 
-                match (unaryA, unaryB) with
-                | Unary (Operator (Plus, _)), Unary (Operator (Plus, _)) -> Ok (Unary opPlus)
-                | Unary (Operator (Minus, _)), Unary (Operator (Minus, _)) -> Ok (Unary opPlus)
-                | Unary (Operator (Plus, _)), Unary (Operator (Minus, _)) -> Ok (Unary opMinus)
-                | Unary (Operator (Minus, _)), Unary (Operator (Plus, _)) -> Ok (Unary opMinus)
-                | _ -> Error "Only Plus and Minus accepted as unary operators"
-    
+    type Unary = 
+        | Unary of BinaryOperator
+        static member Combine(unaryA: Unary, unaryB: Unary) = 
+            match (unaryA, unaryB) with
+            | Unary (Operator (Plus, _)), Unary (Operator (Plus, _)) -> Ok (Unary opPlus)
+            | Unary (Operator (Minus, _)), Unary (Operator (Minus, _)) -> Ok (Unary opPlus)
+            | Unary (Operator (Plus, _)), Unary (Operator (Minus, _)) -> Ok (Unary opMinus)
+            | Unary (Operator (Minus, _)), Unary (Operator (Plus, _)) -> Ok (Unary opMinus)
+            | _ -> Error "Only Plus and Minus accepted as unary operators"
+
     [<RequireQualifiedAccessAttribute>]
     type Expecting  =
     | BinOp
