@@ -1,112 +1,217 @@
-#r "nuget: FSharpPlus"
 
-open FSharpPlus.Lens // <- bring the lens operators in to scope
-open FSharpPlus.Data
+module ParserTypes =
+    open System.Text.RegularExpressions
 
-type Postcode = Postcode of string
+    type Precedence = int
 
-type Address =
-    { HouseNumber: string
-      Postcode: Postcode }
+    type IsAssociative = bool
 
-type CreditCard =
-    { Number: string
-      Expiry: string
-      Cvv: string
-      Address: Address }
-
-type User = { CreditCard: CreditCard }
-
-
-module Address =
-    // Lenses are usually named with a leading underscore
-    let inline _postcode f address =
-        // we pass a value (partToUpdate) and a transformer to f which delegates the running of the transformer to a Functor.  
-            //This Functor may choose to not actually apply the transform, but simply return the value.  
-            //The transform can produce anything, but in the context of a nested data structure it makes sense to return a  new parent instance.  
-
-
-            
-            //We can then pass the parent instance to a lens that updates the grandparent  with  that parent?
-        // when called with view f is a function taking the 'part and returning an instance of Const<Postcode> which has a Map function (transform) that ignores the setter function and just returns  the 'part
-        // when  called with setl f is a function taking a 'part and returning an instance of Identity<Postcode> which has a Map function that produces an Address
-        let partToUpdate = address.Postcode
-        let setter = fun postcode -> { address with Postcode = postcode }
-        f partToUpdate <&> setter
-
-let h = view Address._postcode { HouseNumber ="33"; Postcode = Postcode "SW1" }
-
-let j = setl Address._postcode
-
-
-module CreditCard =
-    // We also usually just name after the property they point to
-    let inline _address f card =
-        f card.Address  // lifts value into a Functor - we now have (perhaps) an Identity<Address> - which implements Map
-        <&> fun address -> { card with Address = address }  // here we call that Map function 
-
-        //if using setl or view  we don't need to worry about the lifting function f - that will be supplied automatically
-
-    // // we could get rid of some of the noise if we can pass our updater to a lifter
-    // let updateCardAddress card  =
-    //     fun address -> { card with Address = address }
-
-    // let dodah (fba : 'b -> 'a)(fab: 'a -> 'b) f =
-    //     fun (b: 'b) ->
-    //         let a = fba b
-
-
-
-
-
-module User =
-    // The <&> is just an infix version of map
-    let inline _creditCard f user =
-        f user.CreditCard
-        <&> fun card -> { user with CreditCard = card }
-
-// this takes a user 
-let setCreditCardPostcode postcode user =
-    // (Postcode -> FSharpPlus.Data.Identity<Postcode>) -> User -> Identity<User>
-    // composedLens takes a function that lifts postcode into a Functor
-    // setl will supply Identity.Return - or something like that, view lifts to Const
-    // that is effectively to say an object that encapsulates the function that updates the container
-    // this mapping function will either run or not (in the case of Const the function is effectively ignored - theMap function returnsthe input).
-    let composedLens = 
-        (User._creditCard
-        << CreditCard._address
-        << Address._postcode)
-
-    // We can use the .-> as an infix version of setl
-    // setl takes the 
-    let updatedUser =
-        setl composedLens postcode user
-
-    let updatedUser' = user |> (composedLens .->  postcode)
+    type ArithmeticOp = 
+    | Plus
+    | Minus
+    | Multiply
+    | Divide
+    | NoOp
+    | Power
+    | Modulo
     
-    user
-    |> (User._creditCard
-        << CreditCard._address
-        << Address._postcode)
-       .-> postcode // .-> is infix setl
+    type  ArithmeticSymbol = 
+    | ArithmeticSymbol of ArithmeticOp * IsAssociative
 
+    type ComparatorSymbol = 
+    | Equals
+    | LessThan
+    | GreaterThan
+    | LessThanOrEquals
+    | GreaterThanOrEquals
+
+    type BinaryOperator = 
+    | Operator of ArithmeticOp * Precedence
+    | Comparator of ComparatorSymbol
+    with 
+        member this.OpToString() = 
+            match this with 
+            | Operator (aSym, _prec) ->
+                match aSym with 
+                | Plus -> " + "
+                | Minus -> " - "
+                | Multiply -> " * "
+                | Divide -> " / "
+                | NoOp -> " NoOp "
+                | Power -> " ^ "
+                | Modulo -> " % "
+            | Comparator cSym -> 
+                match cSym with 
+                | Equals -> " = "
+                | LessThan -> " < "
+                | GreaterThan -> " > "
+                | LessThanOrEquals -> " <= "
+                | GreaterThanOrEquals -> " >= "
+        
+
+    //type BinaryOperator = Symbol //* Precedence // precedence only makes sense for arithmetic operators? tk
+
+    type DataType = 
+    | Numeric
+    | String
+    | Boolean
+    | Unknown
+
+    // | Boolean?
+
+    type Constant = 
+    | StringConst of string
+    | NumericalConst of string
+
+    type BinaryOp = {
+        Operator: BinaryOperator;
+        LHS: option<TypedTerm>;
+        RHS: option<TypedTerm>;
+    }
+
+    // brackets, mult div,  plus, minus
+
+    and Value = // values are indivisible and evaluate to a base type such as int
+    | Tag of string // for the moment assume that tag type is always float  - this could  also be a path - essentially this is either tag or pipoint data reference
+    | Constant of Constant // we could have an option of path here
+    | Path of string //we also need to capture if this is a pipoint or not
+    | BinaryOpValue of BinaryOp // for bracketed expressions
+    | Conditional of TypedTerm * TypedTerm * TypedTerm // Predicate, OnSuccess, OnFail
+    | Function of string * list<TypedTerm> // labelled bracketed expression
+
+    and Term = 
+    | Value of Value
+    | BinaryOp of BinaryOp  // a binaryOp is a monoid and combines two things of the same type
+
+    and TypedTerm = Term * DataType
+
+    [<RequireQualifiedAccessAttribute>]
+    type DataQueue = 
+    | Input
+    | Output
+
+    let noOp = Operator (NoOp, 0)
+    let opPlus = Operator (Plus, 1)
+    let opMinus = Operator (Minus, 1)
+    let opModulo = Operator (Modulo, 1) 
+    let opMultiply = Operator (Multiply, 2)
+    let opDivide = Operator (Divide, 2)
+    let opPower = Operator (Power, 3)
+
+
+    type OpFunc<'T> = ('T * 'T -> 'T) 
+    type CalcOp<'T> = OpFunc<'T> * DataQueue * DataQueue  //make into a record?
+
+    type ParseResult = 
+        | ParseOK of option<string> * string //text matching re, remaining string to parse
+        | ParseError of string
+
+    type Unary = 
+        | Unary of BinaryOperator
+        static member Combine(unaryA: Unary, unaryB: Unary) = 
+            match (unaryA, unaryB) with
+            | Unary (Operator (Plus, _)), Unary (Operator (Plus, _)) -> Ok (Unary opPlus)
+            | Unary (Operator (Minus, _)), Unary (Operator (Minus, _)) -> Ok (Unary opPlus)
+            | Unary (Operator (Plus, _)), Unary (Operator (Minus, _)) -> Ok (Unary opMinus)
+            | Unary (Operator (Minus, _)), Unary (Operator (Plus, _)) -> Ok (Unary opMinus)
+            | _ -> Error "Only Plus and Minus accepted as unary operators"
+
+    [<RequireQualifiedAccessAttribute>]
+    type Expecting  =
+    | BinOp
+    | Val of Unary
+
+    type IntegralPart = int
+    type FractionPart = int
+
+    let reverseString (input: string) =
+        input |> Seq.rev |> Seq.toArray |> System.String
+
+
+
+    let reApply(re: string, s: string) =
+        // s is a string to be parsed and it is expected that this operation will match some or none characters from the front
+        // either as a direct match or as a single group in which case some marker characters, such as brackets will be thrown away
+        printfn "reApply has received [%s]" s
+        let rx = Regex(re, RegexOptions.IgnoreCase + RegexOptions.Multiline +  RegexOptions.Compiled)
+        let m = rx.Match(s)
+
+        match m.Success with 
+        | true -> 
+            let (matchResult, newS) = 
+                match m.Captures.Count with
+                | 1 ->  // working here on whitespace issue.  we may need to match on whitespace separately
+                    printfn "We have a match: %A %d" m.Captures[0].Value m.Length
+                    (Ok (Some m.Groups[1].Value), s[m.Length ..])
+                | _ -> 
+                    let msg = sprintf "More than one group matched in reg exp: %s on string: %s" re s
+                    (Error msg), s
+
+            matchResult, newS    
+
+        | false -> 
+            // printfn "no match: %s :%s " re s
+            Ok None, s
+
+    let parseWhitespace(s: string)  =
+        let reWhitespace: string = @"^\s+"
+        let newValueResult, remaining = reApply(reWhitespace, s)  
+        match newValueResult with 
+        | Ok maybeNewValue ->
+            ParseOK (maybeNewValue, remaining)
+        | Error err ->
+            ParseError err
+
+    let stripLeadingWhitespace(str:string) =
+        match parseWhitespace(str) with 
+        | ParseOK (_, remaining) -> 
+            remaining
+        | ParseError err ->
+            printfn "We should not be failing on stripping whitespace: %s" err
+            str
+
+    let reApplyX(re: string, s: string) = 
+        // strips whitespace before applying a reg exp 
+        let s' = stripLeadingWhitespace(s)      
+        match reApply(re, s') with 
+        | Ok maybeMatch, remaining -> Ok maybeMatch, remaining
+        | (Error msg), remaining-> Error msg, remaining
+
+
+    let parseConditional(s:string) =
+        let reString: string = @"^if\s+(.+?)\s+then\s+" 
+        // let s' = stripLeadingWhitespace(s)
+        let newValueResult, remaining = reApplyX(reString, s)      
+        match newValueResult with 
+        | Ok maybeStr -> 
+        
+            match maybeStr with 
+            | None -> ParseOK (None, s)
+
+            | Some predicate ->
+                // get a reverse of the rest of the string and look for "esle" - this is only valid if the else clause is the rest of the expression
+                // see if s contains an "End If" - in which case we will need to parse this differently
+                // for the moment assume that we don't have End Ifs in which case this if clause must be the rest of the expression
+                let hasEndIf = false
+                match hasEndIf with 
+                | true -> 
+                    ParseError "Have not implemented End Ifs yet"
+                | false -> 
+                let revS = reverseString(remaining)
+                let reElse = @"^(.+?)\s+esle\s+"
+                match reApplyX(reElse, revS) with 
+                | Ok (Some elseClauseRev), onSuccessRev -> 
+                    let onFail = reverseString(elseClauseRev)
+                    let onSuccess = reverseString(onSuccessRev)
+                    let resultStr = sprintf "Predicate:(%s) OnSuccess:(%s) OnFail:(%s)" predicate onSuccess onFail
+
+                    ParseOK (Some resultStr, "") // unless we have end if statements, there won't be any remaining - we should have used up the rest of the expression
+                | _ ->
+                    let msg = sprintf "No else clause in string: %s for predicate %s" s predicate
+                    ParseError msg
+                    
+        | Error msg -> ParseError msg
     
 
-// a lens gives us a way to update some part of a structure, given an instance of that structure
-// it does this by taking a function taking an instance of that structure and 
-//      locating the relevant part -- this is referred to as the getter
-//      updating it -- this is the setter part of the operation.  
-// The setter is a function that 
-// returning the updated structure
-// the lens needs to ultimately return an updated top-level structure
-// for a deeply nested structure, this will mean providing a way to update all the parent objects up to the top
-// this can be done 'manually' or more elegantly,  by chaining lenses together 
-// 
-
-let g() =
-    let n = (box "5")
-    match n with 
-    | :? int as i -> printfn "Int %d " i
-    | _ ->  printfn "None of the above"
-
-
+    let expr = "If x > y then if j < k then 33 else 22 else 99"
+    let gg = ParserTypes.parseConditional(expr)

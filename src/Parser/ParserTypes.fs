@@ -70,12 +70,18 @@ module ParserTypes =
     }
 
     // brackets, mult div,  plus, minus
+    and Conditional = {
+        Predicate:TypedTerm;
+        OnSuccess: TypedTerm;
+        OnFail: TypedTerm;
+    }
 
     and Value = // values are indivisible and evaluate to a base type such as int
     | Tag of string // for the moment assume that tag type is always float  - this could  also be a path - essentially this is either tag or pipoint data reference
     | Constant of Constant // we could have an option of path here
     | Path of string //we also need to capture if this is a pipoint or not
     | BinaryOpValue of BinaryOp // for bracketed expressions
+    | Conditional of Conditional // Predicate, OnSuccess, OnFail
     | Function of string * list<TypedTerm> // labelled bracketed expression
 
     and Term = 
@@ -96,7 +102,6 @@ module ParserTypes =
     let opMultiply = Operator (Multiply, 2)
     let opDivide = Operator (Divide, 2)
     let opPower = Operator (Power, 3)
-
 
     type OpFunc<'T> = ('T * 'T -> 'T) 
     type CalcOp<'T> = OpFunc<'T> * DataQueue * DataQueue  //make into a record?

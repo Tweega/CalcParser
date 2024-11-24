@@ -15,6 +15,10 @@ module CalcParser =
         SimpleName:string
     }
     
+    // this should be in a utils module
+    let reverseString (input: string) =
+        input |> Seq.rev |> Seq.toArray |> System.String
+
 
     let composeParsers(f1: string -> Result<Option<TypedTerm> * string, string>) (f2: string -> Result<option<TypedTerm> * string, string>) =
         // composeParsers strings parsers together but is equivalent to oneOf in that it returns after the first successful parse
@@ -62,16 +66,20 @@ module CalcParser =
         | Error err ->
             ParseError err
 
-    let reApplyX(re: string, s: string) = 
-        // strips whitespace before applying a reg exp       
-        match parseWhitespace(s) with 
+    let stripLeadingWhitespace(str:string) =
+        match parseWhitespace(str) with 
         | ParseOK (_, remaining) -> 
-            match reApply(re, remaining) with 
-            | Ok maybeMatch, remaining' -> Ok maybeMatch, remaining'
-            | (Error msg), remaining'-> Error msg, remaining'
-        | _ -> 
-            printfn "We should not be coming here a fail on whitespace should not happen"
-            Ok None, s
+            remaining
+        | ParseError err ->
+            printfn "We should not be failing on stripping whitespace: %s" err
+            str
+
+    let reApplyX(re: string, s: string) = 
+        // strips whitespace before applying a reg exp 
+        let s' = stripLeadingWhitespace(s)      
+        match reApply(re, s') with 
+        | Ok maybeMatch, remaining -> Ok maybeMatch, remaining
+        | (Error msg), remaining-> Error msg, remaining
 
     let parseNumber(s: string) =
         printfn "ParseNumber %s" s
@@ -148,16 +156,7 @@ module CalcParser =
                     
         | Error msg -> ParseError msg
         
-    let parseIfThenElse() = 
-        // to be done. this re gets between if and end on a multiline input
-        // after which we would want to separate out on then and else
-        //the first clause would split on an equality operator
-        // perhapsif  the else  clause is  not given then default to noOutput.
-
-        let re = @"^\s*if \s*([^-~]+)\s*end"
-        re
-
-
+    
     let parseFunctionName(s:string) =
         let reString: string = sprintf @"^([A-Za-z][A-Za-z0-9]*)\s*\(" //function name starts with alpha optionally continues with alphaNum and terminates with open parenthesis
         let newValueResult, remaining = reApplyX(reString, s)
@@ -222,6 +221,40 @@ module CalcParser =
             processString(letters, 0, [])
         | ParseError msg -> ParseError msg
 
+    let parseConditional(s:string) =
+        let reString: string = @"^if\s+(.+?)\s+then\s+" 
+        let newValueResult, remaining = reApplyX(reString, s)      
+        match newValueResult with 
+        | Ok maybeStr -> 
+        
+            match maybeStr with 
+            | None -> ParseOK (None, s)
+
+            | Some predicate ->
+                // get a reverse of the rest of the string and look for "esle" - this is only valid if the else clause is the rest of the expression
+                // see if s contains an "End If" - in which case we will need to parse this differently
+                // for the moment assume that we don't have End Ifs in which case this if clause must be the rest of the expression
+                let hasEndIf = false
+                match hasEndIf with 
+                | true -> 
+                    ParseError "Have not implemented End Ifs yet"
+                | false -> 
+                let revS = reverseString(remaining)
+                let reElse = @"^(.+?)\s+esle\s+"
+                match reApplyX(reElse, revS) with 
+                | Ok (Some elseClauseRev), onSuccessRev -> 
+                    let onFail = reverseString(elseClauseRev)
+                    let onSuccess = reverseString(onSuccessRev)
+                    let resultStr = sprintf "%s:%s:%s" predicate onSuccess onFail
+
+                    ParseOK (Some resultStr, "") // unless we have end if statements, there won't be any remaining - we should have used up the rest of the expression
+                | _ ->
+                    let msg = sprintf "No else clause in string: %s for predicate %s" s predicate
+                    ParseError msg
+                    
+        | Error msg -> ParseError msg
+
+    
 
     let parseOperator(s:string) =
         let reOp = @"^([+-\/\*\^%])"
@@ -586,14 +619,59 @@ module CalcParser =
                             match fTermsRes with 
                             | Ok tts -> 
                                 // not sure how we will know the return type  of a function unless it is registered in some way
-                                let f = (Value (Function (funcName, tts)), DataType.Numeric)
-                                Ok (Some f, remaining')
+                                let tdt = (Value (Function (funcName, tts)), DataType.Numeric)
+                                Ok (Some tdt, remaining')
                             | Error msg -> Error msg
 
                     | None -> 
                         Ok (None, input)
 
                 | ParseError msg -> Error msg
+
+        | ParseError msg ->
+            Error msg
+    // Result<Term * DataType,string>
+    and parseAndHandleConditional(input: string) =
+        match parseConditional(input) with 
+        | ParseOK (cond, remaining) -> 
+            match cond with
+            | None -> 
+                Ok (None, input)
+            | Some conditional ->
+                let parts = conditional.Split [|':'|] |> List.ofArray
+                match parts with 
+                | predicate :: success :: fail :: [] ->
+                    let predicateResult = parseExpression(predicate)
+                    let successResult = parseExpression(success)
+                    let failResult = parseExpression(fail)
+                    let yy = 
+                        predicateResult |>
+                        Result.bind(fun predicateTerm -> 
+                            successResult |>
+                            Result.bind(fun successTerm -> 
+                                failResult |>
+                                Result.bind(fun failTerm ->
+                                    printfn "We have enough to make a term from a conditional"
+                                    let cond = {
+                                        Predicate = predicateTerm;
+                                        OnSuccess = successTerm;
+                                        OnFail = failTerm;
+                                    }
+                                    let term = cond |> (Value.Conditional >> Value)
+                                    // how do I know the return type of this conditional
+                                    // the success and fail branches should agree, though in AF they don't have to
+                                    // we also have functions such as NoOutput and Exit() - which are side effects
+                                    Ok term
+                                )
+                            )
+                        
+                        )
+                    Error ""
+                | _ -> 
+                    let err = "Wrong number of parts returned from parseConditional"
+                    printfn "%s" err
+                    Error err
+
 
         | ParseError msg ->
             Error msg
@@ -829,9 +907,10 @@ module CalcParser =
                 |> fun s -> "(" + s + ")" 
 
             | Function (fName, _) -> sprintf "Function: %s" fName
+            | Conditional c -> sprintf "Conditional: %s" (c.Predicate.ToString())
         
         // let b: BinaryOp = 9
-        let rec serialiseTerm(acc: list<string>, t: Term, parentPrecedence: Precedence) : list<string>= 
+        let rec serialiseTerm(acc: list<string>, t: Term, parentPrecedence: Precedence) : list<string> = 
             match t with 
             | Value v -> 
                 let  s = valueToString(v)
@@ -905,9 +984,9 @@ module CalcParser =
 
         // list validated variables, if any
 
-        // walk the tree identifying tag inputs - note that this may include attributes also that are PI Point data references
+        // walk the tree identifying tag inputs - note these will be attributes that are PI Point data references
         // an attribute may be a constant as well as a pi tag  - so we would need to signal that in the equation
-        // 'sinusoid' +  @'thresholdConstant' 
+        // 'sinusoid' +  @'thresholdConstant' - we should be able to get this from the AF database
     
         let rec identifyTags(t: Term, isDivisor: bool, tags: list<string * bool>) =
             // recurse  tree pulling out tags
