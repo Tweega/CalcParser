@@ -52,7 +52,7 @@ module ParserTypes =
     //type BinaryOperator = Symbol //* Precedence // precedence only makes sense for arithmetic operators? tk
 
     type DataType = 
-    | Numeric
+    | Numeric   // this is unlikely to be precise enough tk
     | String
     | Boolean
     | Unknown
@@ -91,7 +91,7 @@ module ParserTypes =
     and TypedTerm = Term * DataType
 
     [<RequireQualifiedAccessAttribute>]
-    type DataQueue = 
+    type QueueType = 
     | Input
     | Output
 
@@ -102,9 +102,14 @@ module ParserTypes =
     let opMultiply = Operator (Multiply, 2)
     let opDivide = Operator (Divide, 2)
     let opPower = Operator (Power, 3)
+    let opEq = Comparator Equals
+    let opGT = Comparator GreaterThan
+    let opGTE = Comparator GreaterThanOrEquals
+    let opLT = Comparator LessThan
+    let opLTE = Comparator LessThanOrEquals
 
-    type OpFunc<'T> = ('T * 'T -> 'T) 
-    type CalcOp<'T> = OpFunc<'T> * DataQueue * DataQueue  //make into a record?
+    type Monoid<'T> = ('T * 'T -> 'T) // change to T -> T -> T?
+    type CalcOp<'T> = Monoid<'T> * QueueType * QueueType  //make into a record?
 
     type ParseResult = 
         | ParseOK of option<string> * string //text matching re, remaining string to parse

@@ -86,7 +86,7 @@ module ParserTypes =
     and TypedTerm = Term * DataType
 
     [<RequireQualifiedAccessAttribute>]
-    type DataQueue = 
+    type QueueType = 
     | Input
     | Output
 
@@ -100,7 +100,7 @@ module ParserTypes =
 
 
     type OpFunc<'T> = ('T * 'T -> 'T) 
-    type CalcOp<'T> = OpFunc<'T> * DataQueue * DataQueue  //make into a record?
+    type CalcOp<'T> = OpFunc<'T> * QueueType * QueueType  //make into a record?
 
     type ParseResult = 
         | ParseOK of option<string> * string //text matching re, remaining string to parse
@@ -214,4 +214,4 @@ module ParserTypes =
     
 
     let expr = "If x > y then if j < k then 33 else 22 else 99"
-    let gg = ParserTypes.parseConditional(expr)
+   // let gg = ParserTypes.parseConditional(expr)

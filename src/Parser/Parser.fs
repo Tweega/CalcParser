@@ -358,7 +358,7 @@ module CalcParser =
         // let rootStack = Stack.push rootOp opStack
 
         let parseAndHandleValue = parseAndHandleTag >=> parseAndHandleNumber >=> parseAndHandleString >=> parseAndHandleBrackets
-        let parseAndHandleTerm = parseAndHandleValue >=> parseAndHandleBinaryOperator >=> parseAndHandleFunction
+        let parseAndHandleTerm = parseAndHandleValue >=> parseAndHandleBinaryOperator >=> parseAndHandleFunction >=> parseAndHandleConditional
 
         let rec mergeOpVals (operators: list<BinaryOp>, values:list<Value * DataType>, acc:list<BinaryOp>) =
             match (operators, values) with
@@ -619,8 +619,8 @@ module CalcParser =
                             match fTermsRes with 
                             | Ok tts -> 
                                 // not sure how we will know the return type  of a function unless it is registered in some way
-                                let tdt = (Value (Function (funcName, tts)), DataType.Numeric)
-                                Ok (Some tdt, remaining')
+                                let typedTerm = (Value (Function (funcName, tts)), DataType.Numeric)
+                                Ok (Some typedTerm, remaining')
                             | Error msg -> Error msg
 
                     | None -> 
@@ -630,7 +630,7 @@ module CalcParser =
 
         | ParseError msg ->
             Error msg
-    // Result<Term * DataType,string>
+
     and parseAndHandleConditional(input: string) =
         match parseConditional(input) with 
         | ParseOK (cond, remaining) -> 
@@ -644,29 +644,27 @@ module CalcParser =
                     let predicateResult = parseExpression(predicate)
                     let successResult = parseExpression(success)
                     let failResult = parseExpression(fail)
-                    let yy = 
-                        predicateResult |>
-                        Result.bind(fun predicateTerm -> 
-                            successResult |>
-                            Result.bind(fun successTerm -> 
-                                failResult |>
-                                Result.bind(fun failTerm ->
-                                    printfn "We have enough to make a term from a conditional"
-                                    let cond = {
-                                        Predicate = predicateTerm;
-                                        OnSuccess = successTerm;
-                                        OnFail = failTerm;
-                                    }
-                                    let term = cond |> (Value.Conditional >> Value)
-                                    // how do I know the return type of this conditional
-                                    // the success and fail branches should agree, though in AF they don't have to
-                                    // we also have functions such as NoOutput and Exit() - which are side effects
-                                    Ok term
-                                )
+                    predicateResult |>
+                    Result.bind(fun predicateTerm -> 
+                        successResult |>
+                        Result.bind(fun successTerm -> 
+                            failResult |>
+                            Result.bind(fun failTerm ->
+                                printfn "We have enough to make a term from a conditional"
+                                let cond = {
+                                    Predicate = predicateTerm;
+                                    OnSuccess = successTerm;
+                                    OnFail = failTerm;
+                                }
+                                let term = cond |> (Value.Conditional >> Value)
+                                // how do I know the return type of this conditional
+                                // the success and fail branches should agree, though in AF they don't have to
+                                // we also have functions such as NoOutput and Exit() - which are side effects
+                                Ok (Some (term, DataType.Numeric), remaining)
                             )
-                        
                         )
-                    Error ""
+                    
+                    )
                 | _ -> 
                     let err = "Wrong number of parts returned from parseConditional"
                     printfn "%s" err
@@ -676,37 +674,42 @@ module CalcParser =
         | ParseError msg ->
             Error msg
 
-    let getQueue(t: Term) = 
+    let getQueueType(t: Term) = 
         match t with 
         | Value v-> 
             match v with 
-            | BinaryOpValue _bop -> DataQueue.Output
-            | _-> DataQueue.Input
-        | BinaryOp _bop -> DataQueue.Output
+            | BinaryOpValue _bop -> QueueType.Output
+            | _-> QueueType.Input
+        | BinaryOp _bop -> QueueType.Output
 
 
-    let rec processCalcTree<'T>((term, dt): TypedTerm, inputs: list<Value * DataType>, operators:list<CalcOp<'T>>, opMap: Map<BinaryOperator, OpFunc<'T>> ) : list<Value * DataType> * list<CalcOp<'T>> = 
+    let rec processCalcTree<'T>((term, dt): TypedTerm, inputs: list<Value * DataType>, calcOps:list<CalcOp<'T>>, opMap: Map<BinaryOperator, Monoid<'T>> ) : list<Value * DataType> * list<CalcOp<'T>> = 
         // code in here is ugly due to a binary tree being both a binaryOp and a Value
         // simplifying the code, though  means duplicating all  of the data structures
         // which is also inelegant, but probably the lesser of two evils
+
+        // already when considering including comparators alongside arithmetic functions, we have a clash of types
+        // implementations in this map need to be from obj -> obj -> obj
+
+        // analyses typed term 
 
         match term with 
         | Value v ->
             match v with 
             | BinaryOpValue bop -> 
                 // recast as BinaryOp and call processTree again.
-                processCalcTree((BinaryOp bop, dt), inputs, operators, opMap)
+                processCalcTree((BinaryOp bop, dt), inputs, calcOps, opMap)
             | _ -> 
-                (v, dt) :: inputs, operators
+                (v, dt) :: inputs, calcOps
 
         | BinaryOp bop ->             
             match bop.LHS, bop.RHS with 
             | Some (lhsTerm, lhsDT), Some (rhsTerm, rhsDT) -> 
-                let lhsQueue = getQueue(lhsTerm)                   
-                let rhsQueue = getQueue(rhsTerm)
+                let lhsQueueType = getQueueType(lhsTerm)    // either an input from 'user' or an output from a sub calculation               
+                let rhsQueueType = getQueueType(rhsTerm)
                 let sym = bop.Operator
-                let funcImpl =  Map.find sym opMap // we could check here that lhsDT and rhsDT are the same
-                let operators' = (funcImpl, lhsQueue, rhsQueue) :: operators
+                let funcImpl =  Map.find sym opMap // we could check here that lhsDT and rhsDT are of the same type
+                let calcOps' = (funcImpl, lhsQueueType, rhsQueueType) :: calcOps
 
                 // if lhs is a value, need to lay that down before processing rhs, unless rhs is a value in which case it goes down first
                 match rhsTerm with 
@@ -717,8 +720,8 @@ module CalcParser =
                     | BinaryOp _lBop -> 
                         // these are both binary ops - process the rhs first
                         printfn "lhs term is binary"
-                        let (inputs', operators'') = processCalcTree((rhsTerm, rhsDT), inputs, operators', opMap)
-                        processCalcTree((lhsTerm, lhsDT), inputs', operators'', opMap)
+                        let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
+                        processCalcTree((lhsTerm, lhsDT), inputs', calcOps'', opMap)
                     | Value v ->
                         printfn "lhs term is value"
 
@@ -726,13 +729,13 @@ module CalcParser =
                         | BinaryOpValue _bopV -> 
                             printfn "lhs term is binary VALUE"
                             // this is actually a binary operator so process rhs first
-                            let (inputs', operators'') = processCalcTree((rhsTerm, rhsDT), inputs, operators', opMap)
-                            processCalcTree((lhsTerm, lhsDT), inputs', operators'', opMap)
+                            let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
+                            processCalcTree((lhsTerm, lhsDT), inputs', calcOps'', opMap)
                         | _ ->  
                             // lay lhs value down in inputs before processing rhs
                             printfn "Are we getting  here??"
-                            let (inputs', operators'') = processCalcTree((lhsTerm, lhsDT), inputs, operators', opMap)
-                            processCalcTree((rhsTerm, rhsDT), inputs', operators'', opMap)
+                            let (inputs', calcOps'') = processCalcTree((lhsTerm, lhsDT), inputs, calcOps', opMap)
+                            processCalcTree((rhsTerm, rhsDT), inputs', calcOps'', opMap)
                 | Value v ->
                     printfn "rhs term is value"
                     match v with 
@@ -743,8 +746,8 @@ module CalcParser =
                         | BinaryOp _lBop -> 
                             // these are both binary ops - process the rhs first
                             printfn "lhs term is binary"
-                            let (inputs', operators'') = processCalcTree((rhsTerm, rhsDT), inputs, operators', opMap)
-                            processCalcTree((lhsTerm, lhsDT), inputs', operators'', opMap)
+                            let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
+                            processCalcTree((lhsTerm, lhsDT), inputs', calcOps'', opMap)
                         | Value v ->
                             printfn "lhs term is value"
 
@@ -752,24 +755,24 @@ module CalcParser =
                             | BinaryOpValue _bopV -> 
                                 printfn "lhs term is binary VALUE"
                                 // this is actually a binary operator so process rhs first
-                                let (inputs', operators'') = processCalcTree((rhsTerm, rhsDT), inputs, operators', opMap)
-                                processCalcTree((lhsTerm, lhsDT), inputs', operators'', opMap)
+                                let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
+                                processCalcTree((lhsTerm, lhsDT), inputs', calcOps'', opMap)
                             | _ ->  
                                 // lay lhs value down in inputs before processing rhs
                                 printfn "Are we getting  here??"
-                                let (inputs', operators'') = processCalcTree((lhsTerm, lhsDT), inputs, operators', opMap)
+                                let (inputs', operators'') = processCalcTree((lhsTerm, lhsDT), inputs, calcOps', opMap)
                                 processCalcTree((rhsTerm, rhsDT), inputs', operators'', opMap)
                     | _ ->
                         // process the rhs first regardless of lhs
-                        let (inputs', operators'') = processCalcTree((rhsTerm, rhsDT), inputs, operators', opMap)
-                        processCalcTree((lhsTerm, lhsDT), inputs', operators'', opMap)
+                        let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
+                        processCalcTree((lhsTerm, lhsDT), inputs', calcOps'', opMap)
                     
 
             | _ -> 
                 //we will have to wrap this up in a Result, but for now log and drop out
                 // alternatively we could prevalidate and work on validated structures
                 printfn "Error:  Need LHS and RHS in Binary Operator %A" bop
-                inputs, operators
+                inputs, calcOps
 
 
     let plus (a: float, b:float) =
@@ -797,22 +800,40 @@ module CalcParser =
     let modulo (a: float, b:float) =
         a % b
 
+    let makeComparator (comparator:ComparatorSymbol) (a: float, b:float) =
+        match comparator with 
+        | ComparatorSymbol.Equals -> 
+            a = b
+        | ComparatorSymbol.LessThan -> 
+            a < b
+        | ComparatorSymbol.LessThanOrEquals -> 
+            a <= b
+        | ComparatorSymbol.GreaterThan -> 
+            a > b
+        | ComparatorSymbol.GreaterThanOrEquals -> 
+            a >= b
+
     let getValue<'T>(dataQ, inputs: list<'T>, outputs: list<'T>) = 
         match dataQ with 
-        | DataQueue.Input ->
+        | QueueType.Input ->
             match inputs with 
             | [] -> 
                 printfn "No value in inputs"
                 None, inputs, outputs
             | h :: t -> (Some h, t, outputs)
-        | DataQueue.Output ->
+        | QueueType.Output ->
             match outputs with 
             | [] -> 
                 printfn "No value in outputs"
                 None, inputs, outputs
             | h :: t -> Some h, inputs, t
 
-
+    // input is a list of calc ops (monoid that merges 2 values of the same type, 
+    // plus 2 queues - one that holds values fed into the top level function, 
+    // and another that holds values for sub functions
+    // returns a function that will take a list of arguments (all of type 'T)
+    // when called, the function folds over the calc ops
+    // getValue looks at next item in the queue and if this is of type input gets a value from the input queue, otherwise from the output queue (which is results of calcs)
     let createCalcEvaluator<'T>(ops:list<CalcOp<'T>>) = 
         //pass in number of args? tk
         // how will this work with functions, where the inputs may have different types? tk
@@ -824,13 +845,13 @@ module CalcParser =
             let outputs: list<'T> = []
             let (ins, outs) =
                 ops |>
-                List.fold(fun (inAcc, outAcc) (opFunc, lhsQ, rhsQ) -> 
-                    let (lhsVal: option<'T>, inputs': list<'T>,  outputs': list<'T>) = getValue(lhsQ, inAcc, outAcc)
-                    let (rhsVal: option<'T>, inputs'': list<'T>,  outputs'': list<'T>) = getValue(rhsQ, inputs', outputs')
+                List.fold(fun (inAcc, outAcc) (monoid, lhsQ, rhsQ) -> 
+                    let (lhsVal: option<'T>, inputsLHS: list<'T>,  outputsLHS: list<'T>) = getValue(lhsQ, inAcc, outAcc)
+                    let (rhsVal: option<'T>, inputsRHS: list<'T>,  outputsRHS: list<'T>) = getValue(rhsQ, inputsLHS, outputsLHS)
                     match (lhsVal, rhsVal) with 
                     | (Some lhs, Some rhs) ->
-                        let t:'T = opFunc(lhs, rhs)
-                        (inputs'', t :: outputs'')
+                        let t:'T = monoid(lhs, rhs)
+                        (inputsRHS, t :: outputsRHS)
                     | _ -> 
                         printfn "Not enough values" // we should validate initial input length at the beginning
                         (inputs, outputs)
@@ -858,7 +879,8 @@ module CalcParser =
 
         match exprRes with 
         | Ok binOp -> 
-            printfn "%A" binOp
+            printfn "binOp:\n%A" binOp
+            // perhaps operators need not be part of this map - it is hard to imagine how their implementations might change
             let opMap = 
                 [
                     (opPlus, plus)
@@ -868,6 +890,14 @@ module CalcParser =
                     // (Operator NoOp, this would be an error)
                     (opPower, power)
                     (opModulo, modulo)
+                    // (opEq, makeComparator Equals)
+                    // (opGT, makeComparator GreaterThan)
+                    // (opGTE, makeComparator GreaterThanOrEquals)
+                    // (opLT, makeComparator LessThan)
+                    // (opLTE, makeComparator LessThanOrEquals)
+
+
+
                 ] 
                 |> Map.ofList
                             
