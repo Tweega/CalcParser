@@ -11,15 +11,36 @@ module CalcParser =
 
     let quot = '\u0022'    
 
-    type SimpleType = {
-        SimpleName:string
-    }
+
+    let determinePrecision (a: NumericValue) (b: NumericValue) : Number =
+        // Determines the highest precision between two values
+        match a, b with
+        | NumericValue.Float64 _, _ | _, NumericValue.Float64 _ -> Number.Float64
+        | NumericValue.Float32 _, _ | _, NumericValue.Float32 _ -> Number.Float32
+        | NumericValue.Int64 _, _ | _, NumericValue.Int64 _ -> Number.Int64
+        | NumericValue.Int32 _, _ | _, NumericValue.Int32 _ -> Number.Int32
+        | NumericValue.Int16 _, _ | _, NumericValue.Int16 _ -> Number.Int16
+        | NumericValue.Int8 _, _ | _, NumericValue.Int8 _ -> Number.Int8
+
+    let castToOriginalPrecision (result: float) (precision: Number) : NumericValue =
+        match precision with
+        | Number.Float64 -> NumericValue.Float64 result
+        | Number.Float32 -> NumericValue.Float32 (float32 result)
+        | Number.Int64 -> NumericValue.Int64 (int64 result)
+        | Number.Int32 -> NumericValue.Int32 (int32 result)
+        | Number.Int16 -> NumericValue.Int16 (int16 result)
+        | Number.Int8 -> NumericValue.Int8 (int8 result)
+
+    let toFloat (value: NumericValue) : float =
+        match value with
+        | NumericValue.Float64 f -> f
+        | NumericValue.Float32 f -> float f
+        | NumericValue.Int64 i -> float i
+        | NumericValue.Int32 i -> float i
+        | NumericValue.Int16 i -> float i
+        | NumericValue.Int8 i -> float i
+
     
-    // this should be in a utils module
-    let reverseString (input: string) =
-        input |> Seq.rev |> Seq.toArray |> System.String
-
-
     let composeParsers(f1: string -> Result<Option<TypedTerm> * string, string>) (f2: string -> Result<option<TypedTerm> * string, string>) =
         // composeParsers strings parsers together but is equivalent to oneOf in that it returns after the first successful parse
         fun(inputStr: string)  ->
@@ -104,34 +125,34 @@ module CalcParser =
             ParseError err
 
 
-    let parseTag(s:string) =
-        let reTag: string = @"^\'(.+?)\'"    //tags are strings enclosed in single quotes.  same as for attrib path for pipe character
-        let newValueResult, remaining = reApplyX(reTag, s)      
+    let parseField(s:string) =
+        let reField: string = @"^\'(.+?)\'"    //fields are strings enclosed in single quotes.  same as for attrib path for pipe character
+        let newValueResult, remaining = reApplyX(reField, s)      
         match newValueResult with 
-        | Ok maybeTag -> 
-            match maybeTag with 
+        | Ok maybeField -> 
+            match maybeField with 
             | None -> 
                 ParseOK (None, s)
-            | Some tag ->
-                match tag with 
+            | Some field ->
+                match field with 
                 | "" ->
-                    let msg = "Error: Empty tag name"
+                    let msg = "Error: Empty field name"
                     ParseError msg
                 | _ ->
                     let illegalChars = sprintf "%s%c" @"*'\?;{}[\]\|\\`\" quot //we wouldn't actually detect single quote here
                     let reIllegal = sprintf "[%s]" illegalChars
-                    match reApply(reIllegal, tag) with 
+                    match reApply(reIllegal, field) with 
                     | Ok (Some x),_s -> 
-                        let msg = sprintf "Illegal character (%s)in tag name: %s" x s
+                        let msg = sprintf "Illegal character (%s)in field name: %s" x s
                         ParseError msg
                     | _ ->
                         let reNonPrintable = @"[^ -~]"
-                        match reApply(reNonPrintable, tag) with 
+                        match reApply(reNonPrintable, field) with 
                         | Ok (Some _), _s -> 
-                            let msg = sprintf "Non printable character in tag name: %s" s
+                            let msg = sprintf "Non printable character in field name: %s" s
                             ParseError msg
                         | _ ->
-                            ParseOK (maybeTag, remaining)
+                            ParseOK (maybeField, remaining)
                     
         | Error msg -> ParseError msg
         
@@ -284,20 +305,22 @@ module CalcParser =
             match maybeMatch with 
             | Some str -> 
                 let term = str |> (NumericalConst >> Constant >> Value)
-                Ok (Some (term, DataType.Numeric), remaining)
+                // assume that all numbers are float32 for the moment 0 this needs to change tk
+                Ok (Some (term, DataType.Numeric Number.Float32), remaining)
             | None -> Ok (None, input)
             
         | ParseError msg ->
             Error msg
     
     
-    let parseAndHandleTag(input: string) =
-        match parseTag(input) with 
+    let parseAndHandleField(input: string) =
+        match parseField(input) with 
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
-                let term = str |> ((Tag >> Value))
-                Ok (Some (term, DataType.Numeric), remaining) // assume tags emit numeric values for the moment
+                let term = str |> ((Field >> Value))
+                // assume fields emit float values for the moment - this needs to change tk
+                Ok (Some (term, DataType.Numeric Number.Float32), remaining) 
             | None -> Ok (None, input)
             
         | ParseError msg ->
@@ -305,7 +328,7 @@ module CalcParser =
     
     
     let parseAndHandlePath(input: string, terms: list<TypedTerm>) =
-        match parseTag(input) with 
+        match parseField(input) with 
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
@@ -357,7 +380,7 @@ module CalcParser =
         // let opStack: Stack<BinaryOp> = Stack []
         // let rootStack = Stack.push rootOp opStack
 
-        let parseAndHandleValue = parseAndHandleTag >=> parseAndHandleNumber >=> parseAndHandleString >=> parseAndHandleBrackets
+        let parseAndHandleValue = parseAndHandleField >=> parseAndHandleNumber >=> parseAndHandleString >=> parseAndHandleBrackets
         let parseAndHandleTerm = parseAndHandleValue >=> parseAndHandleBinaryOperator >=> parseAndHandleFunction >=> parseAndHandleConditional
 
         let rec mergeOpVals (operators: list<BinaryOp>, values:list<Value * DataType>, acc:list<BinaryOp>) =
@@ -516,14 +539,14 @@ module CalcParser =
                                         | None -> 
                                             Error "Unable to parse float constant"
                                     | _->
-                                        // we need to handle other numeric types such as tag here tk
+                                        // we need to handle other numeric types such as field here tk
                                         let minusOneOp = (string) -1 |> (NumericalConst >> Constant)
                                         let lhs' = (Value minusOneOp, DataType.Numeric) |> Some
 
                                         let op = {
                                             Operator = opMultiply;
                                             LHS = lhs';
-                                            RHS = Some (term, DataType.Numeric);
+                                            RHS = Some (term, DataType.Numeric Number.Float32);
                                         }
                                         let bopVal = BinaryOpValue op
                                         let values' = (bopVal, dt) :: values
@@ -588,7 +611,7 @@ module CalcParser =
                     | Some parameters ->
                         match parameters.Trim().Length > 0 with 
                         | false->
-                            let f = (Value (Function (funcName, [])), DataType.Numeric)
+                            let f = (Value (Function (funcName, [])), DataType.Numeric Number.Float32)
                             Ok (Some f, remaining')
                         |true -> 
                             let expressions = parameters.Split ','
@@ -619,7 +642,7 @@ module CalcParser =
                             match fTermsRes with 
                             | Ok tts -> 
                                 // not sure how we will know the return type  of a function unless it is registered in some way
-                                let typedTerm = (Value (Function (funcName, tts)), DataType.Numeric)
+                                let typedTerm = (Value (Function (funcName, tts)), DataType.Numeric Number.Float32)
                                 Ok (Some typedTerm, remaining')
                             | Error msg -> Error msg
 
@@ -660,7 +683,7 @@ module CalcParser =
                                 // how do I know the return type of this conditional
                                 // the success and fail branches should agree, though in AF they don't have to
                                 // we also have functions such as NoOutput and Exit() - which are side effects
-                                Ok (Some (term, DataType.Numeric), remaining)
+                                Ok (Some (term, DataType.Numeric Number.Float32), remaining)
                             )
                         )
                     
@@ -683,7 +706,7 @@ module CalcParser =
         | BinaryOp _bop -> QueueType.Output
 
 
-    let rec processCalcTree<'T>((term, dt): TypedTerm, inputs: list<Value * DataType>, calcOps:list<CalcOp<'T>>, opMap: Map<BinaryOperator, Monoid<'T>> ) : list<Value * DataType> * list<CalcOp<'T>> = 
+    let rec processCalcTree<'T>((term, dt): TypedTerm, inputs: list<Value * DataType>, calcOps:list<CalcOp>, opMap: Map<BinaryOperator, Monoid<ResolvedValue>> ) : list<Value * DataType> * list<CalcOp> = 
         // code in here is ugly due to a binary tree being both a binaryOp and a Value
         // simplifying the code, though  means duplicating all  of the data structures
         // which is also inelegant, but probably the lesser of two evils
@@ -774,24 +797,20 @@ module CalcParser =
                 printfn "Error:  Need LHS and RHS in Binary Operator %A" bop
                 inputs, calcOps
 
-
     let plus (a: float, b:float) =
-        printfn "adding %f, %f" a b
+        // printfn "adding %f, %f" a b
         a + b
 
     let minus (a: float, b:float) =
         printfn "subtracting %f, %f" a b
-
         a - b
 
     let multiply (a: float, b:float) =
         printfn "multiplying %f, %f" a b
-
         a * b
 
     let divide (a: float, b:float) =
         printfn "dividing %f, %f" a b
-
         a / b
 
     let power (a: float, b:float) =
@@ -834,23 +853,25 @@ module CalcParser =
     // returns a function that will take a list of arguments (all of type 'T)
     // when called, the function folds over the calc ops
     // getValue looks at next item in the queue and if this is of type input gets a value from the input queue, otherwise from the output queue (which is results of calcs)
-    let createCalcEvaluator<'T>(ops:list<CalcOp<'T>>) = 
+
+
+    let createCalcEvaluator<'T>(ops:list<CalcOp>) = 
         //pass in number of args? tk
         // how will this work with functions, where the inputs may have different types? tk
         // ideally functions will not have to unbox all their inputs, but that might be the only way to do it
-        fun(inputs: list<'T>) ->
+        fun(inputs: list<ResolvedValue>) ->
             // validate number of inputs?
             // iterate through each calOp and pass it the inputs and outputs lists
             // let inputsRev = List.rev inputs
-            let outputs: list<'T> = []
+            let outputs: list<ResolvedValue> = []
             let (ins, outs) =
                 ops |>
                 List.fold(fun (inAcc, outAcc) (monoid, lhsQ, rhsQ) -> 
-                    let (lhsVal: option<'T>, inputsLHS: list<'T>,  outputsLHS: list<'T>) = getValue(lhsQ, inAcc, outAcc)
-                    let (rhsVal: option<'T>, inputsRHS: list<'T>,  outputsRHS: list<'T>) = getValue(rhsQ, inputsLHS, outputsLHS)
+                    let (lhsVal: option<ResolvedValue>, inputsLHS: list<ResolvedValue>,  outputsLHS: list<ResolvedValue>) = getValue(lhsQ, inAcc, outAcc)
+                    let (rhsVal: option<ResolvedValue>, inputsRHS: list<ResolvedValue>,  outputsRHS: list<ResolvedValue>) = getValue(rhsQ, inputsLHS, outputsLHS)
                     match (lhsVal, rhsVal) with 
                     | (Some lhs, Some rhs) ->
-                        let t:'T = monoid(lhs, rhs)
+                        let t:ResolvedValue = monoid(lhs, rhs)
                         (inputsRHS, t :: outputsRHS)
                     | _ -> 
                         printfn "Not enough values" // we should validate initial input length at the beginning
@@ -871,9 +892,6 @@ module CalcParser =
 
             
 
-        
-
-
     let testParseExpression(expr:string) = 
         let exprRes = parseExpression(expr) // these values are just placeholders though they are returned from processCalcTree
 
@@ -883,7 +901,7 @@ module CalcParser =
             // perhaps operators need not be part of this map - it is hard to imagine how their implementations might change
             let opMap = 
                 [
-                    (opPlus, plus)
+                    (opPlus, plus)  // these functions may need wrappers so they operate on a DU of float| string
                     (opMinus, minus)
                     (opMultiply, multiply)
                     (opDivide, divide)
@@ -923,7 +941,7 @@ module CalcParser =
     let rec expressionFromTerm(term: Term) = 
         let valueToString(v: Value) = 
             match v with 
-            | Tag tag -> sprintf @"'%s'" tag
+            | Field field -> sprintf @"'%s'" field
             | Constant c -> 
                 match c with 
                 | StringConst strConst -> strConst
@@ -1014,25 +1032,25 @@ module CalcParser =
 
         // list validated variables, if any
 
-        // walk the tree identifying tag inputs - note these will be attributes that are PI Point data references
-        // an attribute may be a constant as well as a pi tag  - so we would need to signal that in the equation
+        // walk the tree identifying field inputs - note these will be attributes that are PI Point data references
+        // an attribute may be a constant as well as a pi field  - so we would need to signal that in the equation
         // 'sinusoid' +  @'thresholdConstant' - we should be able to get this from the AF database
     
-        let rec identifyTags(t: Term, isDivisor: bool, tags: list<string * bool>) =
-            // recurse  tree pulling out tags
+        let rec identifyFields(t: Term, isDivisor: bool, fields: list<string * bool>) =
+            // recurse  tree pulling out fields
             match t with 
             | Value  v ->
                 match v with 
-                | Tag tag  -> (tag, isDivisor) :: tags // for the moment assume that tag type is always float  - this could  also be a path - essentially this is either tag or pipoint data reference
+                | Field field  -> (field, isDivisor) :: fields // for the moment assume that field type is always float  - this could  also be a path - essentially this is either field or pipoint data reference
                 | BinaryOpValue bop -> 
-                    identifyTags (BinaryOp bop, false, tags)   // recast as BinaryOp and loop again
-                | _ -> tags
+                    identifyFields (BinaryOp bop, false, fields)   // recast as BinaryOp and loop again
+                | _ -> fields
 
             | BinaryOp bop -> 
-                let tags' = 
+                let fields' = 
                     match bop.LHS with 
-                    | Some (lhs, _) -> identifyTags(lhs, false, tags)
-                    | None -> tags
+                    | Some (lhs, _) -> identifyFields(lhs, false, fields)
+                    | None -> fields
                 
                 match bop.RHS with 
                 | Some (rhs, _) -> 
@@ -1045,18 +1063,18 @@ module CalcParser =
                             | _ -> false
                         | _ -> false
 
-                    identifyTags(rhs, isDivisor', tags')
-                | None -> tags'
+                    identifyFields(rhs, isDivisor', fields')
+                | None -> fields'
     
-        let getTags(t:Term) =
-            identifyTags(t, false, [])
+        let getFields(t:Term) =
+            identifyFields(t, false, [])
     
     
-        let tags =       
-            getTags(term)
+        let fields =       
+            getFields(term)
 
         let jj =
-            tags
+            fields
             |> List.fold(fun acc (t, _d) ->
                 let qq = [
                     sprintf "Var%s := " t;
@@ -1076,7 +1094,7 @@ module CalcParser =
 
 
         let divisors =
-            tags
+            fields
             |>List.filter(fun (_t, isDivisor) ->
                 isDivisor
             )
@@ -1096,7 +1114,7 @@ module CalcParser =
 
         
         let badVals = 
-            tags |> 
+            fields |> 
             List.map(fun (t, _d) -> 
                 sprintf "BadVal('%s')" t
             )

@@ -988,7 +988,7 @@ module JutzParser =
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
-                let term = str |> ((Tag >> Value))
+                let term = str |> ((Field >> Value))
                 Ok (Some (term, DataType.Numeric), remaining) // assume tags emit numeric values for the moment
             | None -> Ok (None, input)
             
@@ -1010,7 +1010,7 @@ module JutzParser =
     
     
     
-    //is this function needed - does not do very much working here do we need to sketch out what we are doing??
+    // is this function needed - does not do very much working here do we need to sketch out what we are doing??
     // this is different to reading a file
     // there is a point  at which work is done, but the context of a file  read does not change
     // whereas the context of a parsing operation does change

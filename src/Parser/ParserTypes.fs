@@ -50,12 +50,39 @@ module ParserTypes =
         
 
     //type BinaryOperator = Symbol //* Precedence // precedence only makes sense for arithmetic operators? tk
+    [<RequireQualifiedAccess>]
+    type Number = 
+    | Float64
+    | Float32
+    | Int64
+    | Int32
+    | Int16
+    | Int8
 
+    [<RequireQualifiedAccess>]
     type DataType = 
-    | Numeric   // this is unlikely to be precise enough tk
+    | Numeric of Number
     | String
     | Boolean
     | Unknown
+    | BadVal of string
+
+    [<RequireQualifiedAccess>]
+    type NumericValue = 
+    | Float64 of float
+    | Float32 of float32
+    | Int64 of int64
+    | Int32 of int32
+    | Int16 of int16
+    | Int8 of int8
+
+    [<RequireQualifiedAccess>]
+    type ResolvedValue = 
+    | Numeric of float  //numeric values are cast up to double regardless of type when applied to a function
+    | String of string
+    | Boolean of bool
+    | BadVal of string
+    // need to add lists tk
 
     // | Boolean?
 
@@ -77,9 +104,9 @@ module ParserTypes =
     }
 
     and Value = // values are indivisible and evaluate to a base type such as int
-    | Tag of string // for the moment assume that tag type is always float  - this could  also be a path - essentially this is either tag or pipoint data reference
+    | Field of string // label for a value in a record.  For AF, this would be an attribute in a collection of templated elements.
     | Constant of Constant // we could have an option of path here
-    | Path of string //we also need to capture if this is a pipoint or not
+    | Path of string // this would not be a thing in AF as path references from an analysis are always via a string builder attribute at the local level - this could be different for other systems
     | BinaryOpValue of BinaryOp // for bracketed expressions
     | Conditional of Conditional // Predicate, OnSuccess, OnFail
     | Function of string * list<TypedTerm> // labelled bracketed expression
@@ -109,7 +136,7 @@ module ParserTypes =
     let opLTE = Comparator LessThanOrEquals
 
     type Monoid<'T> = ('T * 'T -> 'T) // change to T -> T -> T?
-    type CalcOp<'T> = Monoid<'T> * QueueType * QueueType  //make into a record?
+    type CalcOp = Monoid<ResolvedValue> * QueueType * QueueType  //make into a record?
 
     type ParseResult = 
         | ParseOK of option<string> * string //text matching re, remaining string to parse
