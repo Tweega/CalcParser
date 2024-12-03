@@ -78,13 +78,20 @@ module ParserTypes =
 
     [<RequireQualifiedAccess>]
     type ResolvedValue = 
-    | Numeric of float  //numeric values are cast up to double regardless of type when applied to a function
+    | Numeric of NumericValue
     | String of string
     | Boolean of bool
     | BadVal of string
     // need to add lists tk
 
     // | Boolean?
+
+    [<RequireQualifiedAccess>]
+    type LiftedValue = 
+    | Numeric of float
+    | String of string
+    | Boolean of bool
+    | BadVal of string
 
     type Constant = 
     | StringConst of string
@@ -135,7 +142,7 @@ module ParserTypes =
     let opLT = Comparator LessThan
     let opLTE = Comparator LessThanOrEquals
 
-    type Monoid<'T> = ('T * 'T -> 'T) // change to T -> T -> T?
+    type Monoid<'T> = ('T * 'T -> 'T) // change to T -> T -> T? tk
     type CalcOp = Monoid<ResolvedValue> * QueueType * QueueType  //make into a record?
 
     type ParseResult = 

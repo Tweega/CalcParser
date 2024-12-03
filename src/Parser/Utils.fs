@@ -121,32 +121,32 @@ module Utils =
     let tryResolveInt16 (s:string) =
         match System.Int16.TryParse(s) with 
         | true, n -> 
-            Some (n |> (NumericValue.Int16 >> ResolvedValue.Numeric))
+            Some ((float) n |> (LiftedValue.Numeric))
         | _ -> None
     
     let tryResolveInt32 (s:string) =
         match System.Int32.TryParse(s) with 
         | true, (n:int32) -> 
-            Some (n |> (NumericValue.Int32 >> ResolvedValue.Numeric))
+            Some ((float) n |> (LiftedValue.Numeric))
         | _ -> None
 
     let tryResolveInt64 (s:string) =
         match System.Int64.TryParse(s) with 
         | true, n ->
-            Some (n |> (NumericValue.Int64 >> ResolvedValue.Numeric))
+            Some ((float) n |> (LiftedValue.Numeric))
         | _ -> None
 
     let tryResolveFloat32 (s:string) =
         match System.Single.TryParse(s) with 
         | true, n ->
-            Some (n |> (NumericValue.Float32 >> ResolvedValue.Numeric))
+            Some ((float) n |> (LiftedValue.Numeric))
         | _ -> None
     
     
     let tryResolveFloat64 (s:string) =
         match System.Double.TryParse(s) with 
         | true, n -> 
-            Some (n |> (NumericValue.Float64 >> ResolvedValue.Numeric))
+            Some (n |> LiftedValue.Numeric)
         | _ -> None
 
     let tryResolveDate(format, provider) (s: string) : option<System.DateTime> =

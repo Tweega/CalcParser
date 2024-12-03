@@ -3,14 +3,13 @@
 module CalcParser =
     open ParserTypes
     open System.Text.RegularExpressions
-    
+    open Tweega.Utils    
     [<RequireQualifiedAccessAttribute>]
     type TermType =
     | Float of IntegralPart * FractionPart
     | String of string
 
     let quot = '\u0022'    
-
 
     let determinePrecision (a: NumericValue) (b: NumericValue) : Number =
         // Determines the highest precision between two values
@@ -40,7 +39,14 @@ module CalcParser =
         | NumericValue.Int16 i -> float i
         | NumericValue.Int8 i -> float i
 
-    
+
+    let liftDataType(dt: DataType) = 
+        // This function takes a data type and where that data  type is numeric, wraps it in a function that casts it to a float
+
+
+        ()
+
+
     let composeParsers(f1: string -> Result<Option<TypedTerm> * string, string>) (f2: string -> Result<option<TypedTerm> * string, string>) =
         // composeParsers strings parsers together but is equivalent to oneOf in that it returns after the first successful parse
         fun(inputStr: string)  ->
@@ -306,7 +312,7 @@ module CalcParser =
             | Some str -> 
                 let term = str |> (NumericalConst >> Constant >> Value)
                 // assume that all numbers are float32 for the moment 0 this needs to change tk
-                Ok (Some (term, DataType.Numeric Number.Float32), remaining)
+                Ok (Some (term, DataType.Numeric Number.Float64), remaining)
             | None -> Ok (None, input)
             
         | ParseError msg ->
@@ -320,7 +326,7 @@ module CalcParser =
             | Some str -> 
                 let term = str |> ((Field >> Value))
                 // assume fields emit float values for the moment - this needs to change tk
-                Ok (Some (term, DataType.Numeric Number.Float32), remaining) 
+                Ok (Some (term, DataType.Numeric Number.Float64), remaining) 
             | None -> Ok (None, input)
             
         | ParseError msg ->
@@ -347,7 +353,7 @@ module CalcParser =
             match maybeMatch with 
             | Some opStr ->
                 // printfn "OP: %s" opStr
-                let binOp = 
+                let binOp:BinaryOperator = 
                     match opStr with 
                     | "+" -> opPlus
                     | "-" -> opMinus
@@ -541,12 +547,12 @@ module CalcParser =
                                     | _->
                                         // we need to handle other numeric types such as field here tk
                                         let minusOneOp = (string) -1 |> (NumericalConst >> Constant)
-                                        let lhs' = (Value minusOneOp, DataType.Numeric) |> Some
+                                        let lhs' = (Value minusOneOp, DataType.Numeric Number.Float64) |> Some
 
                                         let op = {
                                             Operator = opMultiply;
                                             LHS = lhs';
-                                            RHS = Some (term, DataType.Numeric Number.Float32);
+                                            RHS = Some (term, DataType.Numeric Number.Float64);
                                         }
                                         let bopVal = BinaryOpValue op
                                         let values' = (bopVal, dt) :: values
@@ -611,7 +617,7 @@ module CalcParser =
                     | Some parameters ->
                         match parameters.Trim().Length > 0 with 
                         | false->
-                            let f = (Value (Function (funcName, [])), DataType.Numeric Number.Float32)
+                            let f = (Value (Function (funcName, [])), DataType.Numeric Number.Float64)
                             Ok (Some f, remaining')
                         |true -> 
                             let expressions = parameters.Split ','
@@ -642,7 +648,7 @@ module CalcParser =
                             match fTermsRes with 
                             | Ok tts -> 
                                 // not sure how we will know the return type  of a function unless it is registered in some way
-                                let typedTerm = (Value (Function (funcName, tts)), DataType.Numeric Number.Float32)
+                                let typedTerm = (Value (Function (funcName, tts)), DataType.Numeric Number.Float64)
                                 Ok (Some typedTerm, remaining')
                             | Error msg -> Error msg
 
@@ -683,7 +689,7 @@ module CalcParser =
                                 // how do I know the return type of this conditional
                                 // the success and fail branches should agree, though in AF they don't have to
                                 // we also have functions such as NoOutput and Exit() - which are side effects
-                                Ok (Some (term, DataType.Numeric Number.Float32), remaining)
+                                Ok (Some (term, DataType.Numeric Number.Float64), remaining)
                             )
                         )
                     
@@ -706,7 +712,12 @@ module CalcParser =
         | BinaryOp _bop -> QueueType.Output
 
 
-    let rec processCalcTree<'T>((term, dt): TypedTerm, inputs: list<Value * DataType>, calcOps:list<CalcOp>, opMap: Map<BinaryOperator, Monoid<ResolvedValue>> ) : list<Value * DataType> * list<CalcOp> = 
+    let rec processCalcTree<'T>(
+        (term, dt): TypedTerm, 
+        inputs: list<Value * DataType>, 
+        calcOps:list<CalcOp>, 
+        opMap: Map<BinaryOperator, Monoid<ResolvedValue>>) : list<Value * DataType> * list<CalcOp> = 
+
         // code in here is ugly due to a binary tree being both a binaryOp and a Value
         // simplifying the code, though  means duplicating all  of the data structures
         // which is also inelegant, but probably the lesser of two evils
@@ -819,7 +830,8 @@ module CalcParser =
     let modulo (a: float, b:float) =
         a % b
 
-    let makeComparator (comparator:ComparatorSymbol) (a: float, b:float) =
+    
+    let makeComparatorOfT (comparator:ComparatorSymbol) (a: 'T, b:'T) =
         match comparator with 
         | ComparatorSymbol.Equals -> 
             a = b
@@ -899,7 +911,7 @@ module CalcParser =
         | Ok binOp -> 
             printfn "binOp:\n%A" binOp
             // perhaps operators need not be part of this map - it is hard to imagine how their implementations might change
-            let opMap = 
+            let numericOps = 
                 [
                     (opPlus, plus)  // these functions may need wrappers so they operate on a DU of float| string
                     (opMinus, minus)
@@ -914,11 +926,68 @@ module CalcParser =
                     // (opLT, makeComparator LessThan)
                     // (opLTE, makeComparator LessThanOrEquals)
 
+                ]
+                |> List.map(fun (binOp, floatImpl) -> 
+                    // the intention here is to create a wrapping function that 'lifts' numeric values to floats
+                    // then executes the float -> float -> float function, as in plus
+                    // and then drops the value to a lower precision if appropriate
+                    let numericHandler = fun (rv1:ResolvedValue, rv2:ResolvedValue) ->
+                        match (rv1, rv2) with 
+                        | ResolvedValue.Numeric a, ResolvedValue.Numeric b -> 
+                            let float64A = (toFloat a) //|> LiftedValue.Numeric
+                            let float64B = (toFloat b) //|> LiftedValue.Numeric
+                            let float64Result = floatImpl(float64A, float64B)
+                            // if neither original arguments was double reduce precision to highest precision of the inputs
+                            let precision = determinePrecision a b
+                            let droppedValue = castToOriginalPrecision float64Result precision
+                            droppedValue |> ResolvedValue.Numeric
+                        | ResolvedValue.String a, ResolvedValue.String b -> 
+                            ResolvedValue.String (sprintf("%s%s") a b)
+                        |  _ ->
+                            let msg = sprintf "Invalid types for operator : %s.  Got (%s, %s)" (binOp.OpToString()) (rv1.ToString()) (rv2.ToString())
+                            ResolvedValue.BadVal msg
+                    
+                    (binOp, numericHandler)
+                ) 
+                //|> Map.ofList
 
+            let comparatorOps =                 
+                [
+                    (opEq, Equals)
+                    (opGT,  GreaterThan)
+                    (opGTE, GreaterThanOrEquals)
+                    (opLT, LessThan)
+                    (opLTE, LessThanOrEquals)
 
-                ] 
-                |> Map.ofList
-                            
+                ]
+                |> List.map(fun (binOp, comparatorSymbol) -> 
+                    // the intention here is to create a wrapping function that 'lifts' numeric values to floats
+                    // then executes the float -> float -> float function, as in plus
+                    // and then drops the value to a lower precision if appropriate
+                    
+                    let numericHandler = fun (rv1:ResolvedValue, rv2:ResolvedValue) ->
+                        match (rv1, rv2) with 
+                        | ResolvedValue.Numeric a, ResolvedValue.Numeric b -> 
+                            let comparatorImpl = makeComparatorOfT comparatorSymbol
+
+                            let float64A = (toFloat a) //|> LiftedValue.Numeric
+                            let float64B = (toFloat b) //|> LiftedValue.Numeric
+                            let boolResult = comparatorImpl(float64A, float64B)
+                            boolResult |> ResolvedValue.Boolean
+                        | ResolvedValue.String a, ResolvedValue.String b ->
+                            let comparatorImpl = makeComparatorOfT comparatorSymbol
+                            let boolResult = comparatorImpl(a, b)
+                            boolResult |> ResolvedValue.Boolean
+                        |  _ ->
+                            let msg = sprintf "Invalid types for operator : %s.  Got (%s, %s)" (binOp.OpToString()) (rv1.ToString()) (rv2.ToString())
+                            ResolvedValue.BadVal msg
+                    
+                    (binOp, numericHandler)
+                ) 
+
+            let joinedLists = List.Join([comparatorOps; numericOps])
+            let opMap = joinedLists |> Map.ofList
+
             let inputs, operators = processCalcTree(binOp, [], [], opMap)
             
             printfn "%A" inputs
@@ -926,18 +995,18 @@ module CalcParser =
             
             let evaluator = createCalcEvaluator(operators)
             
-            fun (ts: list<float>) ->
+            fun (ts) ->
                 match ts |> evaluator  with 
                 | Ok v -> v
                 | Error msg ->  
                     printfn "%s" msg
-                    infinity
+                    ResolvedValue.BadVal msg
             // Ok (inputs, operators)
         | Error msg -> 
-            fun (ts: list<float>) ->
+            fun (ts) ->
                 printfn "Error: %s" msg
-                infinity
-
+                ResolvedValue.BadVal msg
+                
     let rec expressionFromTerm(term: Term) = 
         let valueToString(v: Value) = 
             match v with 
