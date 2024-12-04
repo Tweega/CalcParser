@@ -207,7 +207,7 @@ module CalcParser =
         | Error msg -> ParseError msg
         
         
-    let parseBrackets(s:string) =
+    let parseBrackets(s:string) : ParseResult =
         // we could replace all the reg exps with character parsing except that would probably look  more like the voice analyser
         let rec processString(chars: list<char>, bracketCount: int, acc: list<char>) =
             match chars with 
@@ -297,7 +297,7 @@ module CalcParser =
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
-                let term = str |> (StringConst >> Constant >> Value)
+                let term = str |> (StringConst >> Value.Constant >> Term.Value)
                 
                 Ok (Some (term, DataType.String), remaining)
             | None -> Ok (None, input)
@@ -310,7 +310,7 @@ module CalcParser =
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
-                let term = str |> (NumericalConst >> Constant >> Value)
+                let term = str |> (NumericalConst >> Value.Constant >> Term.Value)
                 // assume that all numbers are float32 for the moment 0 this needs to change tk
                 Ok (Some (term, DataType.Numeric Number.Float64), remaining)
             | None -> Ok (None, input)
@@ -324,7 +324,7 @@ module CalcParser =
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
-                let term = str |> ((Field >> Value))
+                let term = str |> ((Value.Field >> Term.Value))
                 // assume fields emit float values for the moment - this needs to change tk
                 Ok (Some (term, DataType.Numeric Number.Float64), remaining) 
             | None -> Ok (None, input)
@@ -338,7 +338,7 @@ module CalcParser =
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
-                let term = str |> ((Path >> Value))
+                let term = str |> ((Value.Path >> Term.Value))
                 Ok (Some (term, DataType.Numeric), remaining) // assume that attributes return numeric values for the moment
             | None -> Ok (None, input)
             
@@ -364,12 +364,12 @@ module CalcParser =
                     | _ -> noOp
 
                 let binOp' = {
-                    Operator = binOp;
-                    LHS = None;
-                    RHS = None;
+                    BinaryOp.Operator = binOp;
+                    BinaryOp.LHS = None;
+                    BinaryOp.RHS = None;
                 } 
                 
-                let term = binOp' |> BinaryOp
+                let term = binOp' |> Term.BinaryOp
 
                 Ok (Some (term, DataType.Unknown), remaining)
 
@@ -400,7 +400,7 @@ module CalcParser =
                 match acc with 
                 | [] ->
                     // we only have a term in this expression so return that
-                    Ok ((Value  hVal), hDt)
+                    Ok ((Term.Value  hVal), hDt)
                 | hAcc :: tAcc ->
                     let rec mergeOps(lhsOp: BinaryOp, rhsOp: BinaryOp) =
                         printfn "mergeOps"
@@ -411,7 +411,7 @@ module CalcParser =
                             Error msg
                         | Some (rhsTerm, rhsDt) ->
                             match rhsTerm with
-                            | Value _v ->
+                            | Term.Value _v ->
                                 // compare precedences  -we could just look these up when we need to tk
                                 
                                 let rhsPrec = // things more complex with comparative operators which don't have precedence
@@ -429,7 +429,7 @@ module CalcParser =
 
                                     // lhs.rhs moves to rhs.lhs and this new binOp becomes lhs.rhs
                                     let rhsOp' = { rhsOp with LHS = lhsOp.RHS } 
-                                    let rhsTypedTerm =  (rhsOp' |> BinaryOp, rhsDt)
+                                    let rhsTypedTerm =  (rhsOp' |> Term.BinaryOp, rhsDt)
                                     // let jj = { lhsOp with RHS =  Some rhsTypedTerm }
                                     // printfn "JJ:%A" jj
                                     { lhsOp with RHS =  Some rhsTypedTerm } |> Ok
@@ -438,23 +438,23 @@ module CalcParser =
                                     printfn "false"
                                     // no precedence conflict so rhs becomes new head op with lhs set to current head 
                                     // taking data type from lhs - type validation should happen before this merge - an expression should only contain one type
-                                    let lhsTypedTerm =  (lhsOp |> BinaryOp, rhsDt)
+                                    let lhsTypedTerm =  (lhsOp |> Term.BinaryOp, rhsDt)
                                     { rhsOp with LHS = Some lhsTypedTerm } |> Ok
                                 
-                            | BinaryOp bop ->
+                            | Term.BinaryOp bop ->
                                 printfn "We should not  be here yet"
                                 let mergedOp = mergeOps(bop, rhsOp)
                                 printfn "Merged BOP:%A" mergedOp
                                 match mergedOp with 
                                 | Ok bop' ->
                                     // put bop' into lhsOp.RHS
-                                    let rhsTypedTerm =  ((bop' |> BinaryOp), rhsDt)
+                                    let rhsTypedTerm =  ((bop' |> Term.BinaryOp), rhsDt)
                                     { lhsOp with RHS = Some rhsTypedTerm } |> Ok
 
                                 | Error msg -> Error msg
                                 
                     // put last value into lhs of head of accumulator, if there is one
-                    let op = { hAcc with LHS = Some ((Value hVal), hDt) }
+                    let op = { hAcc with LHS = Some ((Term.Value hVal), hDt) }
                     // let acc' = op :: tAcc
                     let mergeRes = 
                         tAcc 
@@ -468,7 +468,7 @@ module CalcParser =
                     match mergeRes with 
                     | Ok bop' ->
                         // printfn "Success: %A" bop'
-                        Ok ((bop' |> BinaryOp), hDt)
+                        Ok ((bop' |> Term.BinaryOp), hDt)
                     | Error msg -> 
                         // printfn "Failure: %s" msg
                         Error msg
@@ -476,7 +476,7 @@ module CalcParser =
             | hOp :: tOp, (hVal, hDt) :: tVal -> 
                 //  the accumulator is a list of operators with rhs set to value
 
-                let op = { hOp with RHS = Some ((Value hVal), hDt) }
+                let op = { hOp with RHS = Some ((Term.Value hVal), hDt) }
 
                 mergeOpVals(tOp, tVal, op :: acc)
             | _, _ -> Error "unexpected error in mergeOpVals"
@@ -502,24 +502,24 @@ module CalcParser =
                         match expecting with 
                         | Expecting.BinOp ->
                             match term with 
-                            | Value _v -> 
+                            | Term.Value _v -> 
                                 let msg = "Expecting Binary Operator, but got value"
                                 Error msg
-                            | BinaryOp binOp ->
+                            | Term.BinaryOp binOp ->
                                 // we have got what we were expecting - add this operator to binOps list
                                 // printfn "Adding bin op to list %A" binOp
                                 let binOps' = binOp :: binOps
                                 gatherTerms(remaining', values, binOps', Expecting.Val (Unary opPlus))
                         | Expecting.Val unary ->
                             match term with 
-                            | BinaryOp bop ->
+                            | Term.BinaryOp bop ->
                                 // treat this as a unary operator
                                 // printfn "Treating as unary!"
                                 match Unary.Combine(unary, Unary bop.Operator) with 
                                 | Ok unary' -> 
                                     gatherTerms(remaining', values, binOps, Expecting.Val unary')    
                                 | Error msg -> Error msg
-                            | Value v ->
+                            | Term.Value v ->
                                 match unary with 
                                 | Unary (Operator (Plus, _)) ->
                                     // add the value as is to values list
@@ -529,7 +529,7 @@ module CalcParser =
                                     // multiply value by -1 if it is a constant number 
                                     // check  that dt is Numeric otherwose error
                                     match v with 
-                                    | Constant (NumericalConst nStr) ->     
+                                    | Value.Constant (NumericalConst nStr) ->     
                                         let maybeN =                                    
                                             match System.Double.TryParse(nStr) with 
                                             | true, n ->  Some ((string) (n * -1.0))
@@ -538,7 +538,7 @@ module CalcParser =
                                                 None
                                         match maybeN with 
                                         | Some n' ->
-                                            let v' = n' |> (NumericalConst >> Constant)
+                                            let v' = n' |> (NumericalConst >> Value.Constant)
 
                                             let values' = (v', dt) :: values
                                             gatherTerms(remaining', values', binOps, Expecting.BinOp)
@@ -546,15 +546,15 @@ module CalcParser =
                                             Error "Unable to parse float constant"
                                     | _->
                                         // we need to handle other numeric types such as field here tk
-                                        let minusOneOp = (string) -1 |> (NumericalConst >> Constant)
-                                        let lhs' = (Value minusOneOp, DataType.Numeric Number.Float64) |> Some
+                                        let minusOneOp = (string) -1 |> (NumericalConst >> Value.Constant)
+                                        let lhs' = (Term.Value minusOneOp, Number.Float64 |> DataType.Numeric) |> Some
 
                                         let op = {
-                                            Operator = opMultiply;
-                                            LHS = lhs';
-                                            RHS = Some (term, DataType.Numeric Number.Float64);
+                                            BinaryOp.Operator = opMultiply;
+                                            BinaryOp.LHS = lhs';
+                                            BinaryOp.RHS = Some (term, Number.Float64 |> DataType.Numeric);
                                         }
-                                        let bopVal = BinaryOpValue op
+                                        let bopVal = Value.BinaryOpValue op
                                         let values' = (bopVal, dt) :: values
                                         gatherTerms(remaining', values', binOps, Expecting.BinOp)
                                 | _ -> Error "Only Plus and Minus can be used as unary operators"
@@ -593,9 +593,9 @@ module CalcParser =
                     // make a  value out of this term if it is not already one
                     let t = 
                         match term with  
-                        | Value _v -> term
-                        | BinaryOp bop -> 
-                            Value (BinaryOpValue bop)
+                        | Term.Value _v -> term
+                        | Term.BinaryOp bop -> 
+                            Term.Value (Value.BinaryOpValue bop)
                     Ok (Some (t, dt), remaining)
                 | Error msg -> Error msg
             | None -> Ok (None, input)
@@ -610,21 +610,22 @@ module CalcParser =
             | None -> 
                 Ok (None, input)
             | Some funcName ->
-                let parseRes = parseBrackets(remaining)
+                let parseRes:ParseResult = parseBrackets(remaining)
                 match parseRes with 
                 | ParseOK (maybeMatch', remaining') -> 
                     match maybeMatch' with 
-                    | Some parameters ->
-                        match parameters.Trim().Length > 0 with 
+                    | Some parameterString ->
+                        match parameterString.Trim().Length > 0 with 
                         | false->
-                            let f = (Value (Function (funcName, [])), DataType.Numeric Number.Float64)
+                            let f = (Term.Value (Value.Function (funcName, [])), DataType.Numeric Number.Float64)
                             Ok (Some f, remaining')
                         |true -> 
-                            let expressions = parameters.Split ','
+                            let parameters = parameterString.Split ','
                             // create a root binary operator for each parameter
                             printfn "Not expecting to get here"
+                            // parse each parameter expression
                             let results = 
-                                expressions |> 
+                                parameters |> 
                                 List.ofArray |>
                                 List.map parseExpression |>
                                 List.rev                            
@@ -648,7 +649,8 @@ module CalcParser =
                             match fTermsRes with 
                             | Ok tts -> 
                                 // not sure how we will know the return type  of a function unless it is registered in some way
-                                let typedTerm = (Value (Function (funcName, tts)), DataType.Numeric Number.Float64)
+                                let returnType = DataType.Numeric Number.Float64
+                                let typedTerm = (Term.Value (Value.Function (funcName, tts)), returnType)
                                 Ok (Some typedTerm, remaining')
                             | Error msg -> Error msg
 
@@ -681,11 +683,11 @@ module CalcParser =
                             Result.bind(fun failTerm ->
                                 printfn "We have enough to make a term from a conditional"
                                 let cond = {
-                                    Predicate = predicateTerm;
-                                    OnSuccess = successTerm;
-                                    OnFail = failTerm;
+                                    Conditional.Predicate = predicateTerm;
+                                    Conditional.OnSuccess = successTerm;
+                                    Conditional.OnFail = failTerm;
                                 }
-                                let term = cond |> (Value.Conditional >> Value)
+                                let term = cond |> (Value.Conditional >> Term.Value)
                                 // how do I know the return type of this conditional
                                 // the success and fail branches should agree, though in AF they don't have to
                                 // we also have functions such as NoOutput and Exit() - which are side effects
@@ -705,18 +707,18 @@ module CalcParser =
 
     let getQueueType(t: Term) = 
         match t with 
-        | Value v-> 
+        | Term.Value v-> 
             match v with 
-            | BinaryOpValue _bop -> QueueType.Output
+            | Value.BinaryOpValue _bop -> QueueType.Output
             | _-> QueueType.Input
-        | BinaryOp _bop -> QueueType.Output
+        | Term.BinaryOp _bop -> QueueType.Output
 
 
     let rec processCalcTree<'T>(
         (term, dt): TypedTerm, 
         inputs: list<Value * DataType>, 
-        calcOps:list<CalcOp>, 
-        opMap: Map<BinaryOperator, Monoid<ResolvedValue>>) : list<Value * DataType> * list<CalcOp> = 
+        calcOps:list<BinaryCalcOp>, 
+        opMap: Map<BinaryOperator, Mappend<ResolvedValue>>) : list<Value * DataType> * list<BinaryCalcOp> = 
 
         // code in here is ugly due to a binary tree being both a binaryOp and a Value
         // simplifying the code, though  means duplicating all  of the data structures
@@ -728,15 +730,15 @@ module CalcParser =
         // analyses typed term 
 
         match term with 
-        | Value v ->
+        | Term.Value v ->
             match v with 
-            | BinaryOpValue bop -> 
+            | Value.BinaryOpValue bop -> 
                 // recast as BinaryOp and call processTree again.
-                processCalcTree((BinaryOp bop, dt), inputs, calcOps, opMap)
+                processCalcTree((Term.BinaryOp bop, dt), inputs, calcOps, opMap)
             | _ -> 
                 (v, dt) :: inputs, calcOps
 
-        | BinaryOp bop ->             
+        | Term.BinaryOp bop ->             
             match bop.LHS, bop.RHS with 
             | Some (lhsTerm, lhsDT), Some (rhsTerm, rhsDT) -> 
                 let lhsQueueType = getQueueType(lhsTerm)    // either an input from 'user' or an output from a sub calculation               
@@ -747,20 +749,20 @@ module CalcParser =
 
                 // if lhs is a value, need to lay that down before processing rhs, unless rhs is a value in which case it goes down first
                 match rhsTerm with 
-                | BinaryOp _rBop -> 
+                | Term.BinaryOp _rBop -> 
                     printfn "rhs term is binary"
 
                     match lhsTerm with
-                    | BinaryOp _lBop -> 
+                    | Term.BinaryOp _lBop -> 
                         // these are both binary ops - process the rhs first
                         printfn "lhs term is binary"
                         let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
                         processCalcTree((lhsTerm, lhsDT), inputs', calcOps'', opMap)
-                    | Value v ->
+                    | Term.Value v ->
                         printfn "lhs term is value"
 
                         match v with 
-                        | BinaryOpValue _bopV -> 
+                        | Value.BinaryOpValue _bopV -> 
                             printfn "lhs term is binary VALUE"
                             // this is actually a binary operator so process rhs first
                             let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
@@ -770,23 +772,23 @@ module CalcParser =
                             printfn "Are we getting  here??"
                             let (inputs', calcOps'') = processCalcTree((lhsTerm, lhsDT), inputs, calcOps', opMap)
                             processCalcTree((rhsTerm, rhsDT), inputs', calcOps'', opMap)
-                | Value v ->
+                | Term.Value v ->
                     printfn "rhs term is value"
                     match v with 
-                    | BinaryOpValue _bopV -> 
+                    | Value.BinaryOpValue _bopV -> 
                         printfn "rhs term is binary VALUE"
                         //check if lhs is value
                         match lhsTerm with 
-                        | BinaryOp _lBop -> 
+                        | Term.BinaryOp _lBop -> 
                             // these are both binary ops - process the rhs first
                             printfn "lhs term is binary"
                             let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
                             processCalcTree((lhsTerm, lhsDT), inputs', calcOps'', opMap)
-                        | Value v ->
+                        | Term.Value v ->
                             printfn "lhs term is value"
 
                             match v with 
-                            | BinaryOpValue _bopV -> 
+                            | Value.BinaryOpValue _bopV -> 
                                 printfn "lhs term is binary VALUE"
                                 // this is actually a binary operator so process rhs first
                                 let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
@@ -844,7 +846,7 @@ module CalcParser =
         | ComparatorSymbol.GreaterThanOrEquals -> 
             a >= b
 
-    let getValue<'T>(dataQ, inputs: list<'T>, outputs: list<'T>) = 
+    let getValue<'T>(dataQ:QueueType, inputs: list<'T>, outputs: list<'T>) = 
         match dataQ with 
         | QueueType.Input ->
             match inputs with 
@@ -859,7 +861,7 @@ module CalcParser =
                 None, inputs, outputs
             | h :: t -> Some h, inputs, t
 
-    // input is a list of calc ops (monoid that merges 2 values of the same type, 
+    // input is a list of calc ops (mappend that merges 2 values of the same type, 
     // plus 2 queues - one that holds values fed into the top level function, 
     // and another that holds values for sub functions
     // returns a function that will take a list of arguments (all of type 'T)
@@ -867,23 +869,25 @@ module CalcParser =
     // getValue looks at next item in the queue and if this is of type input gets a value from the input queue, otherwise from the output queue (which is results of calcs)
 
 
-    let createCalcEvaluator<'T>(ops:list<CalcOp>) = 
+    let createCalcEvaluator<'T>(ops:list<BinaryCalcOp>) = 
         //pass in number of args? tk
         // how will this work with functions, where the inputs may have different types? tk
         // ideally functions will not have to unbox all their inputs, but that might be the only way to do it
         fun(inputs: list<ResolvedValue>) ->
             // validate number of inputs?
-            // iterate through each calOp and pass it the inputs and outputs lists
+            // iterate through each calcOp and pass it the inputs and outputs lists
             // let inputsRev = List.rev inputs
             let outputs: list<ResolvedValue> = []
             let (ins, outs) =
                 ops |>
-                List.fold(fun (inAcc, outAcc) (monoid, lhsQ, rhsQ) -> 
-                    let (lhsVal: option<ResolvedValue>, inputsLHS: list<ResolvedValue>,  outputsLHS: list<ResolvedValue>) = getValue(lhsQ, inAcc, outAcc)
-                    let (rhsVal: option<ResolvedValue>, inputsRHS: list<ResolvedValue>,  outputsRHS: list<ResolvedValue>) = getValue(rhsQ, inputsLHS, outputsLHS)
+                List.fold(fun (inAcc, outAcc) (mappend, lhsQ, rhsQ) -> 
+                    let (lhsVal: option<ResolvedValue>, inputsLHS: list<ResolvedValue>,  outputsLHS: list<ResolvedValue>) = 
+                        getValue(lhsQ, inAcc, outAcc)
+                    let (rhsVal: option<ResolvedValue>, inputsRHS: list<ResolvedValue>,  outputsRHS: list<ResolvedValue>) = 
+                        getValue(rhsQ, inputsLHS, outputsLHS)
                     match (lhsVal, rhsVal) with 
                     | (Some lhs, Some rhs) ->
-                        let t:ResolvedValue = monoid(lhs, rhs)
+                        let t:ResolvedValue = mappend(lhs, rhs)
                         (inputsRHS, t :: outputsRHS)
                     | _ -> 
                         printfn "Not enough values" // we should validate initial input length at the beginning
@@ -988,7 +992,7 @@ module CalcParser =
             let joinedLists = List.Join([comparatorOps; numericOps])
             let opMap = joinedLists |> Map.ofList
 
-            let inputs, operators = processCalcTree(binOp, [], [], opMap)
+            let (inputs: list<Value * DataType>), (operators: list<BinaryCalcOp>) = processCalcTree(binOp, [], [], opMap)
             
             printfn "%A" inputs
             printfn "%A" operators
@@ -1007,33 +1011,34 @@ module CalcParser =
                 printfn "Error: %s" msg
                 ResolvedValue.BadVal msg
                 
+    
     let rec expressionFromTerm(term: Term) = 
         let valueToString(v: Value) = 
             match v with 
-            | Field field -> sprintf @"'%s'" field
-            | Constant c -> 
+            | Value.Field field -> sprintf @"'%s'" field
+            | Value.Constant c -> 
                 match c with 
                 | StringConst strConst -> strConst
                 | NumericalConst numConst -> (string) numConst
 
-            | Path path -> path
-            | BinaryOpValue binOp -> 
+            | Value.Path path -> path
+            | Value.BinaryOpValue binOp -> 
                 //  would not expect to come here when serialising an expression tree but add brackets for  now which is how binary op values are created
                 printfn "We have a BinaryOpValue in expressionFromTerm - which is unexpected"
-                expressionFromTerm(BinaryOp binOp)
+                expressionFromTerm(Term.BinaryOp binOp)
                 |> fun s -> "(" + s + ")" 
 
-            | Function (fName, _) -> sprintf "Function: %s" fName
-            | Conditional c -> sprintf "Conditional: %s" (c.Predicate.ToString())
+            | Value.Function (fName, _) -> sprintf "Function: %s" fName
+            | Value.Conditional c -> sprintf "Conditional: %s" (c.Predicate.ToString())
         
         // let b: BinaryOp = 9
         let rec serialiseTerm(acc: list<string>, t: Term, parentPrecedence: Precedence) : list<string> = 
             match t with 
-            | Value v -> 
+            | Term.Value v -> 
                 let  s = valueToString(v)
                 s :: acc
                 
-            | BinaryOp bOp ->
+            | Term.BinaryOp bOp ->
                 let thisPrec = 
                     match bOp.Operator with 
                     | Operator (_sym, prec) -> prec
@@ -1048,12 +1053,12 @@ module CalcParser =
                     match bOp.LHS with 
                     | Some (lhsTerm,  _lhsDT) -> 
                         match lhsTerm with 
-                        | Value v ->  
+                        | Term.Value v ->  
                             let  s = valueToString(v)
                             s :: acc2
 
-                        | BinaryOp lhsOp -> 
-                            serialiseTerm(acc2, BinaryOp lhsOp, thisPrec)
+                        | Term.BinaryOp lhsOp -> 
+                            serialiseTerm(acc2, Term.BinaryOp lhsOp, thisPrec)
 
                     | None -> "Error no LHS term" :: acc2 // this would be an error - we should return a result
 
@@ -1064,12 +1069,12 @@ module CalcParser =
                     | Some (rhsTerm,  _rhsDT) -> 
                 
                         match rhsTerm with 
-                        | Value v ->  
+                        | Term.Value v ->  
                             let  s = valueToString(v)
                             s :: accOp
 
-                        | BinaryOp rhsOp ->                                     
-                            serialiseTerm(accOp, BinaryOp rhsOp, thisPrec)
+                        | Term.BinaryOp rhsOp ->                                     
+                            serialiseTerm(accOp, Term.BinaryOp rhsOp, thisPrec)
                             
                     | None -> "Error no RHS term" :: acc // this would be an error - we should return a result
                         
@@ -1108,14 +1113,14 @@ module CalcParser =
         let rec identifyFields(t: Term, isDivisor: bool, fields: list<string * bool>) =
             // recurse  tree pulling out fields
             match t with 
-            | Value  v ->
+            | Term.Value  v ->
                 match v with 
-                | Field field  -> (field, isDivisor) :: fields // for the moment assume that field type is always float  - this could  also be a path - essentially this is either field or pipoint data reference
-                | BinaryOpValue bop -> 
-                    identifyFields (BinaryOp bop, false, fields)   // recast as BinaryOp and loop again
+                | Value.Field field  -> (field, isDivisor) :: fields // for the moment assume that field type is always float  - this could  also be a path - essentially this is either field or pipoint data reference
+                | Value.BinaryOpValue bop -> 
+                    identifyFields (Term.BinaryOp bop, false, fields)   // recast as BinaryOp and loop again
                 | _ -> fields
 
-            | BinaryOp bop -> 
+            | Term.BinaryOp bop -> 
                 let fields' = 
                     match bop.LHS with 
                     | Some (lhs, _) -> identifyFields(lhs, false, fields)

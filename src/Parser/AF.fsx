@@ -81,7 +81,7 @@ module ParserTypes =
 
     and Term = 
     | Value of Value
-    | BinaryOp of BinaryOp  // a binaryOp is a monoid and combines two things of the same type
+    | BinaryOp of BinaryOp  // a binaryOp is a mappend and combines two things of the same type
 
     and TypedTerm = Term * DataType
 
@@ -100,7 +100,7 @@ module ParserTypes =
 
 
     type OpFunc<'T> = ('T * 'T -> 'T) 
-    type CalcOp<'T> = OpFunc<'T> * QueueType * QueueType  //make into a record?
+    type BinaryCalcOp<'T> = OpFunc<'T> * QueueType * QueueType  //make into a record?
 
     type ParseResult = 
         | ParseOK of option<string> * string //text matching re, remaining string to parse

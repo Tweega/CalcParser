@@ -93,10 +93,12 @@ module ParserTypes =
     | Boolean of bool
     | BadVal of string
 
+   // [<RequireQualifiedAccess>]
     type Constant = 
     | StringConst of string
     | NumericalConst of string
 
+    [<RequireQualifiedAccess>]
     type BinaryOp = {
         Operator: BinaryOperator;
         LHS: option<TypedTerm>;
@@ -104,13 +106,14 @@ module ParserTypes =
     }
 
     // brackets, mult div,  plus, minus
-    and Conditional = {
+    
+    and [<RequireQualifiedAccess>] Conditional = {
         Predicate:TypedTerm;
         OnSuccess: TypedTerm;
         OnFail: TypedTerm;
     }
 
-    and Value = // values are indivisible and evaluate to a base type such as int
+    and [<RequireQualifiedAccess>] Value = // values are indivisible and evaluate to a base type such as int
     | Field of string // label for a value in a record.  For AF, this would be an attribute in a collection of templated elements.
     | Constant of Constant // we could have an option of path here
     | Path of string // this would not be a thing in AF as path references from an analysis are always via a string builder attribute at the local level - this could be different for other systems
@@ -118,9 +121,9 @@ module ParserTypes =
     | Conditional of Conditional // Predicate, OnSuccess, OnFail
     | Function of string * list<TypedTerm> // labelled bracketed expression
 
-    and Term = 
+    and [<RequireQualifiedAccess>] Term = 
     | Value of Value
-    | BinaryOp of BinaryOp  // a binaryOp is a monoid and combines two things of the same type
+    | BinaryOp of BinaryOp  // a binaryOp is a mappend and combines two things of the same type
 
     and TypedTerm = Term * DataType
 
@@ -142,8 +145,8 @@ module ParserTypes =
     let opLT = Comparator LessThan
     let opLTE = Comparator LessThanOrEquals
 
-    type Monoid<'T> = ('T * 'T -> 'T) // change to T -> T -> T? tk
-    type CalcOp = Monoid<ResolvedValue> * QueueType * QueueType  //make into a record?
+    type Mappend<'T> = ('T * 'T -> 'T) // change to T -> T -> T? tk
+    type BinaryCalcOp = Mappend<ResolvedValue> * QueueType * QueueType  //make into a record?
 
     type ParseResult = 
         | ParseOK of option<string> * string //text matching re, remaining string to parse

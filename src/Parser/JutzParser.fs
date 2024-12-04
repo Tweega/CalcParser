@@ -988,7 +988,7 @@ module JutzParser =
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
-                let term = str |> ((Field >> Value))
+                let term = str |> ((Value.Field >> Term.Value))
                 Ok (Some (term, DataType.Numeric), remaining) // assume tags emit numeric values for the moment
             | None -> Ok (None, input)
             
@@ -1001,7 +1001,7 @@ module JutzParser =
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
-                let term = str |> ((Path >> Value))
+                let term = str |> ((Value.Path >> Term.Value))
                 Ok (Some (term, DataType.Numeric), remaining) // assume that attributes return numeric values for the moment
             | None -> Ok (None, input)
             
