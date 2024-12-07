@@ -319,14 +319,22 @@ module CalcParser =
             Error msg
     
     
-    let parseAndHandleField(input: string) =
+    let parseAndHandleField(dataTypeMap: Map<string, DataType>) (input: string) =
         match parseField(input) with 
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
-                let term = str |> ((Value.Field >> Term.Value))
-                // assume fields emit float values for the moment - this needs to change tk
-                Ok (Some (term, DataType.Numeric Number.Float64), remaining) 
+                let maybeDT = Map.tryFind (str.ToUpper()) dataTypeMap
+                match maybeDT with 
+                | Some dt ->
+                    let term = str |> ((Value.Field >> Term.Value))
+                    // assume fields emit float values for the moment - this needs to change tk
+                    // working here.  we need to pass in a way to look up data type
+
+                    Ok (Some (term, dt), remaining) 
+                | None -> 
+                    let msg = sprintf "Unable to resolve data type for %s" str
+                    Error msg
             | None -> Ok (None, input)
             
         | ParseError msg ->
@@ -381,13 +389,20 @@ module CalcParser =
 
     let (>=>) = composeParsers
 
-    let rec parseExpression(expr: string) =
+    let rec parseExpression(dataTypeMap:Map<string, DataType>) (expr: string) =
         // let rootOp = makeRootOp()
         // let opStack: Stack<BinaryOp> = Stack []
         // let rootStack = Stack.push rootOp opStack
+        // this will be passed in but hard code while debugging
+        
+        // put these into a wrapper function so we don't have to keep re-assigning
+        let parseAndHandleField' = parseAndHandleField dataTypeMap
+        let parseAndHandleConditional' = parseAndHandleConditional dataTypeMap
+        let parseAndHandleBrackets' = parseAndHandleBrackets dataTypeMap
+        let parseAndHandleFunction' = parseAndHandleFunction dataTypeMap
 
-        let parseAndHandleValue = parseAndHandleField >=> parseAndHandleNumber >=> parseAndHandleString >=> parseAndHandleBrackets
-        let parseAndHandleTerm = parseAndHandleValue >=> parseAndHandleBinaryOperator >=> parseAndHandleFunction >=> parseAndHandleConditional
+        let parseAndHandleValue = parseAndHandleField' >=> parseAndHandleNumber >=> parseAndHandleString >=> parseAndHandleBrackets'
+        let parseAndHandleTerm = parseAndHandleValue >=> parseAndHandleBinaryOperator >=> parseAndHandleFunction' >=> parseAndHandleConditional'
 
         let rec mergeOpVals (operators: list<BinaryOp>, values:list<Value * DataType>, acc:list<BinaryOp>) =
             match (operators, values) with
@@ -582,12 +597,12 @@ module CalcParser =
             printfn "%s" msg
             Error msg
 
-    and parseAndHandleBrackets(input: string) =
+    and parseAndHandleBrackets(dtMap: Map<string,DataType>)(input: string) =
         match parseBrackets(input) with 
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
             | Some str -> 
-                let termRes = parseExpression(str)
+                let termRes = parseExpression dtMap str
                 match termRes with 
                 | Ok (term, dt) ->
                     // make a  value out of this term if it is not already one
@@ -603,7 +618,7 @@ module CalcParser =
         | ParseError msg ->
             Error msg
     
-    and parseAndHandleFunction(input: string) =
+    and parseAndHandleFunction(dtMap: Map<string,DataType>)(input: string) =
         match parseFunctionName(input) with 
         | ParseOK (maybeFuncName, remaining) -> 
             match maybeFuncName with
@@ -627,7 +642,7 @@ module CalcParser =
                             let results = 
                                 parameters |> 
                                 List.ofArray |>
-                                List.map parseExpression |>
+                                List.map (parseExpression dtMap) |>
                                 List.rev                            
                                 
                             // now run through the results of each paramter from list<results>
@@ -662,7 +677,7 @@ module CalcParser =
         | ParseError msg ->
             Error msg
 
-    and parseAndHandleConditional(input: string) =
+    and parseAndHandleConditional(dtMap: Map<string,DataType>)(input: string) =
         match parseConditional(input) with 
         | ParseOK (cond, remaining) -> 
             match cond with
@@ -672,9 +687,9 @@ module CalcParser =
                 let parts = conditional.Split [|':'|] |> List.ofArray
                 match parts with 
                 | predicate :: success :: fail :: [] ->
-                    let predicateResult = parseExpression(predicate)
-                    let successResult = parseExpression(success)
-                    let failResult = parseExpression(fail)
+                    let predicateResult = parseExpression dtMap predicate
+                    let successResult = parseExpression dtMap success 
+                    let failResult = parseExpression dtMap fail
                     predicateResult |>
                     Result.bind(fun predicateTerm -> 
                         successResult |>
@@ -909,7 +924,13 @@ module CalcParser =
             
 
     let testParseExpression(expr:string) = 
-        let exprRes = parseExpression(expr) // these values are just placeholders though they are returned from processCalcTree
+        let dtMap = 
+            [
+                ("SINUSOID", (DataType.Numeric Number.Float64))
+                ("CDT158", (DataType.Numeric Number.Float64))
+            ]
+            |> Map.ofList
+        let exprRes = parseExpression dtMap expr // these values are just placeholders though they are returned from processCalcTree
 
         match exprRes with 
         | Ok binOp -> 
@@ -999,18 +1020,9 @@ module CalcParser =
             
             let evaluator = createCalcEvaluator(operators)
             
-            fun (ts) ->
-                match ts |> evaluator  with 
-                | Ok v -> v
-                | Error msg ->  
-                    printfn "%s" msg
-                    ResolvedValue.BadVal msg
-            // Ok (inputs, operators)
+            Ok (inputs, operators)
         | Error msg -> 
-            fun (ts) ->
-                printfn "Error: %s" msg
-                ResolvedValue.BadVal msg
-                
+            Error msg
     
     let rec expressionFromTerm(term: Term) = 
         let valueToString(v: Value) = 
