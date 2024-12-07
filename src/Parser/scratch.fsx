@@ -1,5 +1,5 @@
 
-    #r @".\bin\Debug\net6.0\Parser.dll"
+    #r @".\bin\Debug\net8.0\Parser.dll"
     open Parser.ParserTypes
     open System.Text.RegularExpressions
 
@@ -861,65 +861,6 @@
             Error msg
 
     
-    let parseAndHandleTag(input: string) =
-        match parseTag(input) with 
-        | ParseOK (maybeMatch, remaining) -> 
-            match maybeMatch with 
-            | Some str -> 
-                let term = str |> ((Tag >> Value))
-                Ok (Some (term, DataType.Numeric), remaining) // assume tags emit numeric values for the moment
-            | None -> Ok (None, input)
-            
-        | ParseError msg ->
-            Error msg
-    
-    
-    let parseAndHandlePath(input: string, terms: list<TypedTerm>) =
-        match parseTag(input) with 
-        | ParseOK (maybeMatch, remaining) -> 
-            match maybeMatch with 
-            | Some str -> 
-                let term = str |> ((Path >> Value))
-                Ok (Some (term, DataType.Numeric), remaining) // assume that attributes return numeric values for the moment
-            | None -> Ok (None, input)
-            
-        | ParseError msg ->
-            Error msg
-    
-    
-    let parseAndHandleBinaryOperator(input: string) =
-        match parseOperator(input) with 
-
-        | ParseOK (maybeMatch, remaining) -> 
-            match maybeMatch with 
-            | Some opStr ->
-                // printfn "OP: %s" opStr
-                let binOp = 
-                    match opStr with 
-                    | "+" -> opPlus
-                    | "-" -> opMinus
-                    | "*" -> opMultiply
-                    | "/" -> opDivide
-                    | "%" -> opModulo
-                    | "^" -> opPower
-                    | _ -> noOp
-
-                let binOp' = {
-                    Operator = binOp;
-                    LHS = None;
-                    RHS = None;
-                } 
-                
-                let term = binOp' |> BinaryOp
-
-                Ok (Some (term, DataType.Unknown), remaining)
-
-            | None ->
-                Ok (None, input)
-
-        | ParseError msg ->
-            Error msg
-
     //is this function needed - does not do very much working here do we need to sketch out what we are doing??
     // this is different to reading a file
     // there is a point  at which work is done, but the context of a file  read does not change

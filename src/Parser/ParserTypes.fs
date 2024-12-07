@@ -97,6 +97,8 @@ module ParserTypes =
     type Constant = 
     | StringConst of string
     | NumericalConst of string
+    // dates can be constants also
+    // there will also be AF specific constants
 
     [<RequireQualifiedAccess>]
     type BinaryOp = {
@@ -131,6 +133,7 @@ module ParserTypes =
     type QueueType = 
     | Input
     | Output
+    | Constant of Constant
 
     let noOp = Operator (NoOp, 0)
     let opPlus = Operator (Plus, 1)

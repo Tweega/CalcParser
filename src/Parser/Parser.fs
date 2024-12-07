@@ -725,6 +725,7 @@ module CalcParser =
         | Term.Value v-> 
             match v with 
             | Value.BinaryOpValue _bop -> QueueType.Output
+            | Value.Constant c -> QueueType.Constant c
             | _-> QueueType.Input
         | Term.BinaryOp _bop -> QueueType.Output
 
@@ -750,7 +751,9 @@ module CalcParser =
             | Value.BinaryOpValue bop -> 
                 // recast as BinaryOp and call processTree again.
                 processCalcTree((Term.BinaryOp bop, dt), inputs, calcOps, opMap)
-            | _ -> 
+            | Value.Constant _c -> 
+                inputs, calcOps
+            | _ ->
                 (v, dt) :: inputs, calcOps
 
         | Term.BinaryOp bop ->             
@@ -861,20 +864,33 @@ module CalcParser =
         | ComparatorSymbol.GreaterThanOrEquals -> 
             a >= b
 
-    let getValue<'T>(dataQ:QueueType, inputs: list<'T>, outputs: list<'T>) = 
+    let getResolvedValue(dataQ:QueueType, inputs: list<ResolvedValue>, outputs: list<ResolvedValue>) = 
+        // should we return a BadValue instead of None? tk
         match dataQ with 
         | QueueType.Input ->
             match inputs with 
             | [] -> 
-                printfn "No value in inputs"
-                None, inputs, outputs
-            | h :: t -> (Some h, t, outputs)
+                let msg = "No value in inputs"
+                Error msg, inputs, outputs
+            | h :: t -> (Ok h, t, outputs)
         | QueueType.Output ->
             match outputs with 
             | [] -> 
-                printfn "No value in outputs"
-                None, inputs, outputs
-            | h :: t -> Some h, inputs, t
+                let msg = "No value in outputs"
+                Error msg, inputs, outputs
+            | h :: t -> Ok h, inputs, t
+        | QueueType.Constant c ->   //for constants we don't take off either input stack (outputs are inputs that result from binary operations)
+            match c with 
+            | Constant.NumericalConst nStr ->
+                let maybeNumerical = tryResolveNumber nStr
+                match maybeNumerical with 
+                | Some numerical -> 
+                    Ok (ResolvedValue.Numeric numerical), inputs, outputs
+                | None -> 
+                    let msg = sprintf "Unable to resolve numerical constant %s" nStr
+                    Error msg, inputs, outputs
+            | Constant.StringConst str -> 
+                Ok (ResolvedValue.String str), inputs, outputs
 
     // input is a list of calc ops (mappend that merges 2 values of the same type, 
     // plus 2 queues - one that holds values fed into the top level function, 
@@ -896,12 +912,12 @@ module CalcParser =
             let (ins, outs) =
                 ops |>
                 List.fold(fun (inAcc, outAcc) (mappend, lhsQ, rhsQ) -> 
-                    let (lhsVal: option<ResolvedValue>, inputsLHS: list<ResolvedValue>,  outputsLHS: list<ResolvedValue>) = 
-                        getValue(lhsQ, inAcc, outAcc)
-                    let (rhsVal: option<ResolvedValue>, inputsRHS: list<ResolvedValue>,  outputsRHS: list<ResolvedValue>) = 
-                        getValue(rhsQ, inputsLHS, outputsLHS)
+                    let (lhsVal, inputsLHS: list<ResolvedValue>,  outputsLHS: list<ResolvedValue>) = 
+                        getResolvedValue(lhsQ, inAcc, outAcc)
+                    let (rhsVal, inputsRHS: list<ResolvedValue>,  outputsRHS: list<ResolvedValue>) = 
+                        getResolvedValue(rhsQ, inputsLHS, outputsLHS)
                     match (lhsVal, rhsVal) with 
-                    | (Some lhs, Some rhs) ->
+                    | (Ok lhs, Ok rhs) ->
                         let t:ResolvedValue = mappend(lhs, rhs)
                         (inputsRHS, t :: outputsRHS)
                     | _ -> 

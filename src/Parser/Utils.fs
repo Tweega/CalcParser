@@ -121,32 +121,38 @@ module Utils =
     let tryResolveInt16 (s:string) =
         match System.Int16.TryParse(s) with 
         | true, n -> 
-            Some ((float) n |> (LiftedValue.Numeric))
+            Some (n |> (NumericValue.Int16))
         | _ -> None
     
     let tryResolveInt32 (s:string) =
         match System.Int32.TryParse(s) with 
         | true, (n:int32) -> 
-            Some ((float) n |> (LiftedValue.Numeric))
+            Some (n |> (NumericValue.Int32))
         | _ -> None
 
     let tryResolveInt64 (s:string) =
         match System.Int64.TryParse(s) with 
         | true, n ->
-            Some ((float) n |> (LiftedValue.Numeric))
+            Some (n |> (NumericValue.Int64))
+
+//            Some ((float) n |> (LiftedValue.Numeric))
         | _ -> None
 
     let tryResolveFloat32 (s:string) =
         match System.Single.TryParse(s) with 
         | true, n ->
-            Some ((float) n |> (LiftedValue.Numeric))
+            Some (n |> (NumericValue.Float32))
+
+//            Some ((float) n |> (LiftedValue.Numeric))
         | _ -> None
     
     
     let tryResolveFloat64 (s:string) =
         match System.Double.TryParse(s) with 
         | true, n -> 
-            Some (n |> LiftedValue.Numeric)
+            Some (n |> (NumericValue.Float64))
+
+//            Some (n |> LiftedValue.Numeric)
         | _ -> None
 
     let tryResolveDate(format, provider) (s: string) : option<System.DateTime> =
@@ -160,9 +166,28 @@ module Utils =
 
     let tryResolveNumber(numStr: string) =
         let numericParsers = [
-            tryResolveFloat64
+            tryResolveInt16;
+            tryResolveInt32;
+            tryResolveInt64;
+            tryResolveFloat32;
+            tryResolveFloat64;
         ]
         List.AnyTry(numericParsers, numStr)
+
+    let tryConvertToNumericFloat(numStr:string) =
+        match tryResolveNumber(numStr) with 
+        | Some numericValue ->
+            let f = 
+                match numericValue with 
+                    | NumericValue.Float64 f64 -> f64
+                    | NumericValue.Float32 f32 -> (float) f32 
+                    | NumericValue.Int64 i64 -> (float) i64
+                    | NumericValue.Int32 i32 -> (float) i32
+                    | NumericValue.Int16 i16 -> (float) i16
+                    | NumericValue.Int8 i8 -> (float) i8
+            Some f
+
+        | None -> None
 
 
 
