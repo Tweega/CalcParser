@@ -24,11 +24,38 @@ let resolveValues(values) =
     )
 let parseResult = Parser.CalcParser.testParseExpression(expr3)
 
+// this will eventually take a start and end time, possibly a filter expression
+
+
+let generateRandomFloats n =
+    let random = System.Random()
+    List.init n (fun _ -> random.NextDouble())
+
+let getValues(tag: string, eventCount) = 
+    generateRandomFloats eventCount
+
+
 match parseResult with 
-| Ok (values, _executor) -> 
-    printfn "%A" values
+| Ok (values, evaluator) -> 
+    let cdtValues = 
+        getValues("CDT158", 10)
+        |> resolveValues
+    let sinusoidValues = 
+        getValues("SINUSOID", 10)
+        |> resolveValues
+
+    let xx = List.transpose([cdtValues; sinusoidValues])
+    let hh = xx |> List.map evaluator
+    
+    
+    // let rvs = resolveValues([1.1; 2.2])
+    // let ans = rvs |> evaluator
+
+    // printfn "%A" values
+    printfn "ans: %A" hh
 | Error msg ->
     printfn "%s" msg
+
 
 // printfn "%f" ans
 

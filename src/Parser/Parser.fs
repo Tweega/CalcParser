@@ -1036,7 +1036,7 @@ module CalcParser =
             
             let evaluator = createCalcEvaluator(operators)
             
-            Ok (inputs, operators)
+            Ok (inputs, evaluator)
         | Error msg -> 
             Error msg
     
