@@ -1036,24 +1036,42 @@ module CalcParser =
             
             let evaluator = createCalcEvaluator(operators)
 
-            // map inputs to input values
-            let inputs' = 
-                inputs |> 
+            // map inputs (Typed Values) to input values
+            let rec tryMapValuesToInputValues(ins: list<Value * DataType>)  =
+                ins |> 
                 List.fold(fun acc (value, dt) -> 
                     match acc with 
                     | Ok acc' ->
                         match value with 
-                        | Value.Field filedName -> acc
-                        | Value.Function (s, f) -> acc
-                        | _ -> Error "We should not have this type of Value"
+                        | Value.Field fieldName -> 
+                            Ok ((((fieldName, dt) |> InputValue.Field)) :: acc')
+                        | Value.Function (funName, args) ->
+                            // map typed terms to typed values
+                            let funArgsResult: Result<list<InputValue>, string> = 
+                                tryMapValuesToInputValues(args)
+                                |> Result.bind(fun inVals -> 
+                                    //wrap each input value in FunctionArg.InputValue
+                                    inVals |> List.map FunctionArg.InputValue |> Ok
+                                )
+                                |> Result.bind(fun inputArgs -> 
+                                    Ok (InputValue.Function (funName, inputArgs, dt) :: acc')
+                                )
+                            funArgsResult
+                            
+                        | _ -> 
+                            let msg = sprintf "Invalid value type in final list of values: %A" value
+                            Error msg
                     | Error err -> Error err 
                     
                 ) (Ok list<InputValue>.Empty)
+                
+
+            match (tryMapValuesToInputValues inputs) with 
+            | Ok inputValues -> 
+                Ok (inputValues, evaluator)
+            | Error err -> Error err
             
-            Ok (inputs, evaluator)
-        | Error msg -> 
-            Error msg
-    
+            
     let rec expressionFromTerm(term: Term) = 
         let valueToString(v: Value) = 
             match v with 
