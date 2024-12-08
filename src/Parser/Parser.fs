@@ -1035,6 +1035,20 @@ module CalcParser =
             printfn "%A" operators
             
             let evaluator = createCalcEvaluator(operators)
+
+            // map inputs to input values
+            let inputs' = 
+                inputs |> 
+                List.fold(fun acc (value, dt) -> 
+                    match acc with 
+                    | Ok acc' ->
+                        match value with 
+                        | Value.Field filedName -> acc
+                        | Value.Function (s, f) -> acc
+                        | _ -> Error "We should not have this type of Value"
+                    | Error err -> Error err 
+                    
+                ) (Ok list<InputValue>.Empty)
             
             Ok (inputs, evaluator)
         | Error msg -> 

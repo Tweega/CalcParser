@@ -121,7 +121,7 @@ module ParserTypes =
     | Path of string // this would not be a thing in AF as path references from an analysis are always via a string builder attribute at the local level - this could be different for other systems
     | BinaryOpValue of BinaryOp // for bracketed expressions
     | Conditional of Conditional // Predicate, OnSuccess, OnFail
-    | Function of string * list<TypedTerm> // labelled bracketed expression
+    | Function of string * list<Value * DataType> // labelled bracketed expression
 
     and [<RequireQualifiedAccess>] Term = 
     | Value of Value
@@ -134,6 +134,16 @@ module ParserTypes =
     | Input
     | Output
     | Constant of Constant
+
+    // how are we going to handle conditionals? has this been done yet? I think so.  these are just variants on binary ops
+    [<RequireQualifiedAccessAttribute>]
+    type FunctionArg = 
+    | Constant of Constant
+    | InputValue of InputValue
+
+    and [<RequireQualifiedAccessAttribute>] InputValue = 
+    | Field of string   // this is equivalent to Tag / Variable name (calculated in same analysis)
+    | Function of string * list<FunctionArg>
 
     let noOp = Operator (NoOp, 0)
     let opPlus = Operator (Plus, 1)
