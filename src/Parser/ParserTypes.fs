@@ -121,8 +121,8 @@ module ParserTypes =
     | Path of string // this would not be a thing in AF as path references from an analysis are always via a string builder attribute at the local level - this could be different for other systems
     | BinaryOpValue of BinaryOp // for bracketed expressions
     | Conditional of Conditional // Predicate, OnSuccess, OnFail
-    | Function of string * list<Value * DataType> // labelled bracketed expression
-//    | Function of string * list<TypedTerm> // labelled bracketed expression
+    // | Function of string * list<Value * DataType> // labelled bracketed expression
+    | Function of string * list<TypedTerm> // labelled bracketed expression
 
 
     and [<RequireQualifiedAccess>] Term = 

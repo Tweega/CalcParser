@@ -1029,7 +1029,7 @@ module CalcParser =
             let joinedLists = List.Join([comparatorOps; numericOps])
             let opMap = joinedLists |> Map.ofList
 
-            let (inputs: list<Value * DataType>), (operators: list<BinaryCalcOp>) = processCalcTree(binOp, [], [], opMap)
+            let (inputs: list<TypedTerm>), (operators: list<BinaryCalcOp>) = processCalcTree(binOp, [], [], opMap)
             
             printfn "%A" inputs
             printfn "%A" operators
@@ -1037,36 +1037,40 @@ module CalcParser =
             let evaluator = createCalcEvaluator(operators)
 
             // map inputs (Typed Values) to input values
-            let rec tryMapValuesToInputValues(ins: list<Value * DataType>)  =
+            let rec tryMapTermsToInputValues(ins: list<TypedTerm>)  =
                 ins |> 
-                List.fold(fun acc (value, dt) -> 
+                List.fold(fun acc (term, dt) -> 
                     match acc with 
                     | Ok acc' ->
-                        match value with 
-                        | Value.Field fieldName -> 
-                            Ok ((((fieldName, dt) |> InputValue.Field)) :: acc')
-                        | Value.Function (funName, args) ->
-                            // map typed terms to typed values
-                            let funArgsResult: Result<list<InputValue>, string> = 
-                                tryMapValuesToInputValues(args)
-                                |> Result.bind(fun inVals -> 
-                                    //wrap each input value in FunctionArg.InputValue
-                                    inVals |> List.map FunctionArg.InputValue |> Ok
-                                )
-                                |> Result.bind(fun inputArgs -> 
-                                    Ok (InputValue.Function (funName, inputArgs, dt) :: acc')
-                                )
-                            funArgsResult
-                            
-                        | _ -> 
-                            let msg = sprintf "Invalid value type in final list of values: %A" value
-                            Error msg
+                        match term with 
+                        | Term.Value v ->
+                            match v with 
+                            | Value.Field fieldName ->  
+                                Ok ((((fieldName, dt) |> InputValue.Field)) :: acc')
+                            | Value.Function (funName, tts) ->
+                                // map typed terms to typed values
+                                let funArgsResult: Result<list<InputValue>, string> = 
+                                    tryMapTermsToInputValues(tts)
+                                    |> Result.bind(fun inVals -> 
+                                        //wrap each input value in FunctionArg.InputValue
+                                        inVals |> List.map FunctionArg.InputValue |> Ok
+                                    )
+                                    |> Result.bind(fun inputArgs -> 
+                                        Ok (InputValue.Function (funName, inputArgs, dt) :: acc')
+                                    )
+                                funArgsResult
+                            | _ -> 
+                                let msg = sprintf "Invalid value type in final list of values: %A" term
+                                Error msg
+                        | Term.BinaryOp _bop -> 
+                                let msg = sprintf "Invalid value type in final list of values: %A" term
+                                Error msg
                     | Error err -> Error err 
                     
                 ) (Ok list<InputValue>.Empty)
                 
 
-            match (tryMapValuesToInputValues inputs) with 
+            match (tryMapTermsToInputValues inputs) with 
             | Ok inputValues -> 
                 Ok (inputValues, evaluator)
             | Error err -> Error err
