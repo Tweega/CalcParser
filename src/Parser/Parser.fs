@@ -823,7 +823,7 @@ module CalcParser =
                     
 
             | _ -> 
-                //we will have to wrap this up in a Result, but for now log and drop out
+                // we will have to wrap this up in a Result, but for now log and drop out
                 // alternatively we could prevalidate and work on validated structures
                 printfn "Error:  Need LHS and RHS in Binary Operator %A" bop
                 inputs, calcOps
@@ -1037,7 +1037,7 @@ module CalcParser =
             let evaluator = createCalcEvaluator(operators)
 
             // map inputs (Typed Values) to input values
-            let rec tryMapTermsToInputValues(ins: list<Value * DataType>)  =
+            let rec tryMapTypedValuesToInputValues(ins: list<Value * DataType>)  =
                 ins |> 
                 List.fold(fun acc (v, dt) -> 
                     match acc with 
@@ -1054,20 +1054,21 @@ module CalcParser =
                                         acc 
                                         |> Result.bind(fun acc' -> 
                                             match term with 
-                                            | Term.BinaryOp bop -> 
-                                                Error "jkjkj"
+                                            | Term.BinaryOp _bop -> 
+                                                // perhaps processCalcTree needs to return something that does not contain BinaryOperator
+                                                // in other words perhaps this code should be in processCalcTree
+                                                Error "Only expecting Term.Values after processCalcTree - Not expecting a Binary Operator as Term"
                                             | Term.Value tv -> 
                                                 match tv with 
                                                 | Value.BinaryOpValue _bop -> Error "BinaryOpValue unsupported"
                                                 | Value.Conditional _c ->Error "Conditional Unsupported" 
                                                 | Value.Constant _c -> Error "Constant unsupported"
-                                                | Value.Field f -> 
-                                                    let iv = 
-                                                        InputValue.Field f
-                                                    Ok ((iv, dt) :: acc')
-                                                | Value.Function (fn, args) -> 
+                                                | Value.Field field -> 
+                                                    // this is a tag
+                                                    Ok ((InputValue.Field field, dt) :: acc')
+                                                | Value.Function (funcName, args) -> 
                                                     // map function args from typed terms to typed values
-                                                    // WORKING HERE.  trying to get a list of input values via typed values via typed terms
+                                                    // WORKING HERE. trying to get a list of input values via typed values via typed terms
                                                     let tvs = 
                                                         args |> 
                                                         List.map(fun (t, dt) -> 
