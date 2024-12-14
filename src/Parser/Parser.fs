@@ -311,7 +311,7 @@ module CalcParser =
             match maybeMatch with 
             | Some str -> 
                 let term = str |> (NumericalConst >> Value.Constant >> Term.Value)
-                // assume that all numbers are float32 for the moment 0 this needs to change tk
+                // assume that all numbers are float64 for the moment 0 this needs to change tk
                 Ok (Some (term, DataType.Numeric Number.Float64), remaining)
             | None -> Ok (None, input)
             
@@ -618,7 +618,8 @@ module CalcParser =
         | ParseError msg ->
             Error msg
     
-    and parseAndHandleFunction(dtMap: Map<string,DataType>)(input: string) =
+    and parseAndHandleFunction(dtMap: Map<string,DataType>)(input: string) 
+        : Result<option<TypedTerm> * string,string> =
         match parseFunctionName(input) with 
         | ParseOK (maybeFuncName, remaining) -> 
             match maybeFuncName with
@@ -632,14 +633,14 @@ module CalcParser =
                     | Some parameterString ->
                         match parameterString.Trim().Length > 0 with 
                         | false->
-                            let f = (Term.Value (Value.Function (funcName, [])), DataType.Numeric Number.Float64)
+                            let f = (Term.Value (Value.Function (funcName, DataType.Unknown, [])), DataType.Numeric Number.Float64)
                             Ok (Some f, remaining')
                         |true -> 
                             let parameters = parameterString.Split ','
                             // create a root binary operator for each parameter
                             printfn "Not expecting to get here"
                             // parse each parameter expression
-                            let results = 
+                            let argResults = 
                                 parameters |> 
                                 List.ofArray |>
                                 List.map (parseExpression dtMap) |>
@@ -649,23 +650,35 @@ module CalcParser =
                             // | Function of string * list<TypedTerm> // labelled bracketed expression
                             
                             let fTermsRes =
-                                results |>
-                                List.fold(fun (acc: Result<list<Term * DataType>, string>) (res:Result<(Term * DataType),string>) ->
+                                argResults |>
+                                List.fold(fun (acc: Result<list<TypedValue>, string>) (res:Result<(Term * DataType),string>) ->
                                     match acc with 
                                     | Ok tts ->
                                         match res with 
-                                        | Ok tt ->
-                                            Ok (tt :: tts)
+                                        | Ok (t, dt) ->
+                                            match t with 
+                                            | Term.BinaryOp bop -> 
+                                                // I will eventually need an evaluator for each function
+                                                // and each evaluator will either have its own list of inputs
+                                                // or take from a common one
+                                                // how would I know the data type of an argument. 
+                                                // we have dt but where did we get that from?
+                                                Ok ((bop |> Value.BinaryOpValue, dt ) :: tts)
+                                            | Term.Value v -> 
+                                                Ok ((v, dt) :: tts)
                                         | Error msg -> Error msg
                                     | Error msg -> Error msg
                                 ) (Ok [])
 
                                 // Ok (Some (term, DataType.Numeric), remaining) // assume that attributes return numeric values for the moment
                             match fTermsRes with 
-                            | Ok tts -> 
+                            | Ok tvs -> 
                                 // not sure how we will know the return type  of a function unless it is registered in some way
+                                // this will either be supplied later after a lookup of functin name 
+                                // or a map of functions needs to be passed in here for the lookup to be done now tk
+                                
                                 let returnType = DataType.Numeric Number.Float64
-                                let typedTerm = (Term.Value (Value.Function (funcName, tts)), returnType)
+                                let typedTerm = (Term.Value (Value.Function (funcName, returnType, tvs)), returnType)
                                 Ok (Some typedTerm, remaining')
                             | Error msg -> Error msg
 
@@ -949,6 +962,8 @@ module CalcParser =
         let exprRes = parseExpression dtMap expr // these values are just placeholders though they are returned from processCalcTree
 
         match exprRes with 
+        | Error msg -> 
+                Error (sprintf "Error: %s" msg)
         | Ok binOp -> 
             printfn "binOp:\n%A" binOp
             // perhaps operators need not be part of this map - it is hard to imagine how their implementations might change
@@ -1037,81 +1052,36 @@ module CalcParser =
             let evaluator = createCalcEvaluator(operators)
 
             // map inputs (Typed Values) to input values
-            let rec tryMapTypedValuesToInputValues(ins: list<Value * DataType>)  =
+            let rec tryMapTypedValuesToInputValues(ins: list<TypedValue>)  =
                 ins |> 
                 List.fold(fun acc (v, dt) -> 
                     match acc with 
                     | Ok acc' ->
                         match v with 
                         | Value.Field fieldName ->  
-                            Ok ((((fieldName, dt) |> InputValue.Field)) :: acc')
-                        | Value.Function (funName, tts) ->
-                            // map typed terms to typed values
-                            let hh = 
-                                tts |> 
-                                List.fold(fun acc (term, dt) -> 
-                                    let ff: Result<list<InputValue>, string> = 
-                                        acc 
-                                        |> Result.bind(fun acc' -> 
-                                            match term with 
-                                            | Term.BinaryOp _bop -> 
-                                                // perhaps processCalcTree needs to return something that does not contain BinaryOperator
-                                                // in other words perhaps this code should be in processCalcTree
-                                                Error "Only expecting Term.Values after processCalcTree - Not expecting a Binary Operator as Term"
-                                            | Term.Value tv -> 
-                                                match tv with 
-                                                | Value.BinaryOpValue _bop -> Error "BinaryOpValue unsupported"
-                                                | Value.Conditional _c ->Error "Conditional Unsupported" 
-                                                | Value.Constant _c -> Error "Constant unsupported"
-                                                | Value.Field field -> 
-                                                    // this is a tag
-                                                    Ok ((InputValue.Field field, dt) :: acc')
-                                                | Value.Function (funcName, args) -> 
-                                                    // map function args from typed terms to typed values
-                                                    // WORKING HERE. trying to get a list of input values via typed values via typed terms
-                                                    let tvs = 
-                                                        args |> 
-                                                        List.map(fun (t, dt) -> 
-                                                            match t with 
-                                                            | Term.BinaryOp _bop-> Error "BinaryOp unsupported"
-                                                            | Term.Value v ->
-                                                                match v with 
-                                                                | Value.BinaryOpValue _bop -> Error "BinaryOpValue unsupported as function arg"
-                                                                | Value.Conditional _c -> Error "Conditional not valid as FunctionArg - why not? tk" 
-                                                                | Value.Constant c -> FunctionArg.Constant c
-                                                                | Value.Field f -> ((InputValue.Field f) |> FunctionArg.InputValue)
-                                                        )
-
-                                                    let jk = tryMapTermsToInputValues
-
-
-                                                    let yy = 
-                                                        InputValue.Function
-                                                    Ok ((tv, dt) :: acc')
-                                                | Value.Path _p -> Error "Path Unsupported"
-                                        ) (Ok [])
-                                    ff
-                                    
-                                    
+                            let yy = Ok ((((fieldName, dt) |> InputValue.Field)) :: acc')
+                            yy
+                        | Value.Function (funName, dt, tvs) ->
                             let funArgsResult: Result<list<InputValue>, string> = 
-                                tryMapTermsToInputValues(tts)
+                                tryMapTypedValuesToInputValues(tvs)
                                 |> Result.bind(fun inVals -> 
                                     //wrap each input value in FunctionArg.InputValue
                                     inVals |> List.map FunctionArg.InputValue |> Ok
                                 )
                                 |> Result.bind(fun inputArgs -> 
-                                    Ok (InputValue.Function (funName, inputArgs, dt) :: acc')
+                                    Ok (InputValue.Function (funName, dt, inputArgs) :: acc')
                                 )
-                            funArgsResult
+                            funArgsResult                                    
+                            
                         | _ -> 
-                            let msg = sprintf "Invalid value type in final list of values: %A" term
+                            let msg = sprintf "Invalid value type in final list of values: %A" v
                             Error msg
                     | Error err -> Error err 
                     
                 ) (Ok list<InputValue>.Empty)
                 
 
-            match (tryMapTermsToInputValues inputs) with 
+            match (tryMapTypedValuesToInputValues inputs) with 
             | Ok inputValues -> 
                 Ok (inputValues, evaluator)
             | Error err -> Error err
@@ -1133,7 +1103,7 @@ module CalcParser =
                 expressionFromTerm(Term.BinaryOp binOp)
                 |> fun s -> "(" + s + ")" 
 
-            | Value.Function (fName, _) -> sprintf "Function: %s" fName
+            | Value.Function (fName, _, _) -> sprintf "Function: %s" fName
             | Value.Conditional c -> sprintf "Conditional: %s" (c.Predicate.ToString())
         
         // let b: BinaryOp = 9

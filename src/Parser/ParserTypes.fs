@@ -100,6 +100,8 @@ module ParserTypes =
     // dates can be constants also
     // there will also be AF specific constants
 
+    type ReturnType = DataType
+
     [<RequireQualifiedAccess>]
     type BinaryOp = {
         Operator: BinaryOperator;
@@ -122,14 +124,14 @@ module ParserTypes =
     | BinaryOpValue of BinaryOp // for bracketed expressions
     | Conditional of Conditional // Predicate, OnSuccess, OnFail
     // | Function of string * list<Value * DataType> // labelled bracketed expression
-    | Function of string * list<TypedTerm> // labelled bracketed expression
-
+    | Function of string * ReturnType * list<TypedValue> // labelled bracketed expression
 
     and [<RequireQualifiedAccess>] Term = 
     | Value of Value
     | BinaryOp of BinaryOp  // a binaryOp is a mappend and combines two things of the same type
 
     and TypedTerm = Term * DataType
+    and TypedValue = Value * DataType
 
     [<RequireQualifiedAccessAttribute>]
     type QueueType = 
@@ -137,15 +139,18 @@ module ParserTypes =
     | Output
     | Constant of Constant
 
+    type FunctionName = string
+
     // how are we going to handle conditionals? has this been done yet? I think so.  these are just variants on binary ops
+    // might function args come from 'user' input? for the moment, assume that all inputs to this are constants and do not reference input values
     [<RequireQualifiedAccessAttribute>]
     type FunctionArg = 
-    | Constant of Constant
+    | Constant of Constant  // a function arg can be a constant such as a time period "*" or tasg name, but are bound into binaryOp functions
     | InputValue of InputValue
 
     and [<RequireQualifiedAccessAttribute>] InputValue = 
-    | Field of string * DataType  // this is equivalent to Tag / Variable name (calculated in same analysis)
-    | Function of string * list<FunctionArg> * DataType
+    | Field of FunctionName * DataType  // this is equivalent to Tag / Variable name (calculated in same analysis)
+    | Function of FunctionName * ReturnType * list<FunctionArg>
 
     let noOp = Operator (NoOp, 0)
     let opPlus = Operator (Plus, 1)

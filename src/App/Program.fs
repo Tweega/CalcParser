@@ -17,11 +17,33 @@ let expr = "5 * ((1 + 2) * (3 + 4))"
 let expr1 = "1 - 2 - 3 * 4" // this gives me unecessary rhs parentheses 1 - 2 - {3 * 4}
 let expr2 = "(1 - 2) - 3 - 4" // this gives me unecessary rhs parentheses 1 - 2 - {3 * 4}
 let expr3 = "3 + 'CDT158' / 'Sinusoid'"
-let resolveValues(values) = 
+
+let resolveFloats(values) = 
     values |> 
     List.map(fun i -> 
         ResolvedValue.Numeric (NumericValue.Float64 ((float) i))
     )
+
+(*
+let rec doArgs(typedTerms: list<TypedTerm>) = 
+    // transform typed terms into resolved values
+    let hh = 
+        typedTerms |> 
+        List.fold(fun acc (term, _dt) -> 
+            match term with 
+            | Term.BinaryOp _bop -> 
+                Error "we should not be returning binaryOps from parseExpression - only values tk"
+            | Term.Value v ->
+                match v with 
+                | Value.
+                
+            acc
+        ) (Ok [])
+
+    hh
+*)
+
+
 let parseResult = Parser.CalcParser.testParseExpression(expr3)
 
 // this will eventually take a start and end time, possibly a filter expression
@@ -34,21 +56,21 @@ let generateRandomFloats n =
 let getValues(tag: string, eventCount) = 
     generateRandomFloats eventCount
 
-
+(*
 match parseResult with 
 | Ok (values, evaluator) -> 
     let cdtValues = 
         getValues("CDT158", 10)
-        |> resolveValues
+        |> resolveFloats
     let sinusoidValues = 
         getValues("SINUSOID", 10)
-        |> resolveValues
+        |> resolveFloats
 
     let xx = List.transpose([cdtValues; sinusoidValues])
     let hh = xx |> List.map evaluator
     
     
-    // let rvs = resolveValues([1.1; 2.2])
+    // let rvs = resolveFloats([1.1; 2.2])
     // let ans = rvs |> evaluator
 
     // printfn "%A" values
@@ -56,10 +78,12 @@ match parseResult with
 | Error msg ->
     printfn "%s" msg
 
+*)
 
 // printfn "%f" ans
 
-// let s = "tagTot('CDT158') + tagAvg('Sinusoid', " + quote("*-1d") + ", " + quote("*") + ")"
+let s = "1 + tagAvg('Sinusoid', " + quote("*-1d") + ", " + quote("*") + ")"
+// let rs = s |> resolveFunctions
 // //--------------------
 // let yy = Parser.CalcParser.parseExpression(s)
 
