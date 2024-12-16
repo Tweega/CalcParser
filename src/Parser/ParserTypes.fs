@@ -77,11 +77,39 @@ module ParserTypes =
     | Int8 of int8
 
     [<RequireQualifiedAccess>]
+    type TimeUnit =
+    | Year
+    | Month
+    | Week
+    | Day
+    | Hour
+    | Minute
+    | Second
+    | BadVal of string
+    with 
+        // use module instead? tk
+        static member toTimeUnit(str:string) = 
+            match str with
+            | "y" -> TimeUnit.Year
+            | "mo" -> TimeUnit.Year
+            | "w" -> TimeUnit.Year
+            | "d" -> TimeUnit.Year
+            | "h" -> TimeUnit.Year
+            | "m" -> TimeUnit.Year
+            | "s" -> TimeUnit.Year
+            | _ ->TimeUnit.BadVal str 
+
+    // | Millisecond ?
+
+
+    [<RequireQualifiedAccess>]
     type ResolvedValue = 
     | Numeric of NumericValue
     | String of string
     | Boolean of bool
     | BadVal of string
+    | RelativeDate of string
+    | DateOffset of int * TimeUnit
     // need to add lists tk
 
     // | Boolean?

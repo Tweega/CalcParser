@@ -4,6 +4,8 @@ module CalcParser =
     open ParserTypes
     open System.Text.RegularExpressions
     open Tweega.Utils    
+    open Microsoft.FSharp.Core.Operators.Checked
+
     [<RequireQualifiedAccessAttribute>]
     type TermType =
     | Float of IntegralPart * FractionPart
@@ -30,21 +32,34 @@ module CalcParser =
         | Number.Int16 -> NumericValue.Int16 (int16 result)
         | Number.Int8 -> NumericValue.Int8 (int8 result)
 
-    let toFloat (value: NumericValue) : float =
-        match value with
-        | NumericValue.Float64 f -> f
-        | NumericValue.Float32 f -> float f
-        | NumericValue.Int64 i -> float i
-        | NumericValue.Int32 i -> float i
-        | NumericValue.Int16 i -> float i
-        | NumericValue.Int8 i -> float i
+    let toFloat (value: NumericValue) : Result<float, string> =
+        try 
+            let i64 = 
+                match value with
+                | NumericValue.Float64 f -> f
+                | NumericValue.Float32 f -> float f
+                | NumericValue.Int64 i -> float i
+                | NumericValue.Int32 i -> float i
+                | NumericValue.Int16 i -> float i
+                | NumericValue.Int8 i -> float i
+            Ok i64
+        with 
+            | err -> Error err.Message
 
 
-    let liftDataType(dt: DataType) = 
-        // This function takes a data type and where that data  type is numeric, wraps it in a function that casts it to a float
-
-
-        ()
+    let toInt64 (value: NumericValue) : Result<int64, string> =
+        try 
+            let i64 = 
+                match value with
+                | NumericValue.Float64 f -> int64 f //this could throw out of bounds error
+                | NumericValue.Float32 f -> int64 f
+                | NumericValue.Int64 i -> i
+                | NumericValue.Int32 i -> int64 i
+                | NumericValue.Int16 i -> int64 i
+                | NumericValue.Int8 i -> int64 i
+            Ok i64
+        with 
+            | err -> Error err.Message
 
 
     let composeParsers(f1: string -> Result<Option<TypedTerm> * string, string>) (f2: string -> Result<option<TypedTerm> * string, string>) =
@@ -877,27 +892,138 @@ module CalcParser =
                 printfn "Error:  Need LHS and RHS in Binary Operator %A" bop
                 inputs, calcOps
 
-    let plus (a: float, b:float) =
-        // printfn "adding %f, %f" a b
-        a + b
+    let int64Plus(a:int64, b:int64) = 
+        try 
+            let i64 = a + b
+            ResolvedValue.Numeric (NumericValue.Int64 i64)
+        with 
+            | err -> ResolvedValue.BadVal err.Message
 
-    let minus (a: float, b:float) =
-        printfn "subtracting %f, %f" a b
-        a - b
+    let int64Minus(a:int64, b:int64) = 
+        try 
+            ResolvedValue.Numeric (NumericValue.Int64 (a - b))
+        with 
+            | err -> ResolvedValue.BadVal err.Message
 
-    let multiply (a: float, b:float) =
-        printfn "multiplying %f, %f" a b
-        a * b
+    let int64Multiply(a:int64, b:int64) = 
+        try 
+            ResolvedValue.Numeric (NumericValue.Int64 (a * b))
+        with 
+            | err -> ResolvedValue.BadVal err.Message
 
-    let divide (a: float, b:float) =
-        printfn "dividing %f, %f" a b
-        a / b
 
-    let power (a: float, b:float) =
-        a ** b
+    let int64Divide(a:int64, b:int64) = 
+        try 
+            ResolvedValue.Numeric (NumericValue.Int64 (a / b))
+        with 
+            | err -> ResolvedValue.BadVal err.Message
+
+    let int64Modulo(a:int64, b:int64) = 
+        try 
+            ResolvedValue.Numeric (NumericValue.Int64 (a % b))
+        with 
+            | err -> ResolvedValue.BadVal err.Message
+
+    let floatPlus(precision:Number, a:float, b:float) = 
+        try 
+            let f = a + b
+            ResolvedValue.Numeric <| castToOriginalPrecision f precision 
+        with 
+            | err -> ResolvedValue.BadVal err.Message
+
+    let floatMinus(precision:Number, a:float, b:float) = 
+        try 
+            let f = a - b
+            ResolvedValue.Numeric <| castToOriginalPrecision f precision 
+        with 
+            | err -> ResolvedValue.BadVal err.Message
+
+    let floatMultiply(precision:Number, a:float, b:float) = 
+        try 
+            let f = a * b
+            ResolvedValue.Numeric <| castToOriginalPrecision f precision 
+        with 
+            | err -> ResolvedValue.BadVal err.Message
     
-    let modulo (a: float, b:float) =
-        a % b
+    let floatDivide(precision:Number, a:float, b:float) = 
+        try 
+            let f = a / b
+            ResolvedValue.Numeric <| castToOriginalPrecision f precision 
+        with 
+            | err -> ResolvedValue.BadVal err.Message
+
+    let floatPower(precision:Number, a:float, b:float) = 
+        try 
+            let f = a ** b
+            ResolvedValue.Numeric <| castToOriginalPrecision f precision 
+        with 
+            | err -> ResolvedValue.BadVal err.Message
+
+    let floatModulo(precision:Number, a:float, b:float) = 
+        try 
+            let f = a / b
+            ResolvedValue.Numeric <| castToOriginalPrecision f precision 
+        with 
+            | err -> ResolvedValue.BadVal err.Message
+
+    
+    let binop (op:ArithmeticOp, rv1: ResolvedValue, rv2:ResolvedValue) =
+        match (rv1, rv2) with 
+        | ResolvedValue.Numeric a, ResolvedValue.Numeric b -> 
+            let precision = determinePrecision a b
+            match precision with 
+            | Number.Int64 ->
+                match ((toInt64 a), (toInt64 b)) with 
+                | Ok int64A, Ok int64B  ->
+                    match op with 
+                    | Plus -> int64Plus(int64A, int64B)
+                    | Minus -> int64Minus(int64A, int64B)
+                    | Multiply -> int64Multiply(int64A, int64B)
+                    | Divide -> int64Divide(int64A, int64B)
+                    | NoOp -> ResolvedValue.BadVal "NoOp encountered"
+                    | Power -> 
+                        match (toFloat a), (toFloat b) with
+                        | Ok floatA, Ok floatB -> 
+                            floatPower(precision, floatA, floatB) //int64 does not support power operator so try with float and hope for the best
+                        | _, Error err -> ResolvedValue.BadVal err
+                        | Error err, _ -> ResolvedValue.BadVal err
+                
+                    | Modulo -> int64Modulo(int64A, int64B)
+                    
+                | _, Error err -> ResolvedValue.BadVal err
+                | Error err, _ -> ResolvedValue.BadVal err
+            | _ ->
+                match ((toFloat a), (toFloat b)) with 
+                | Ok floatA, Ok floatB  ->
+                    match op with    
+                    | Plus -> floatPower(precision, floatA, floatB)
+                    | Minus -> floatPower(precision, floatA, floatB)
+                    | Multiply -> floatPower(precision, floatA, floatB)
+                    | Divide -> floatPower(precision, floatA, floatB)
+                    | NoOp -> ResolvedValue.BadVal "NoOp encountered"
+                    | Power -> floatPower(precision, floatA, floatB)
+                    | Modulo -> floatPower(precision, floatA, floatB)
+                | _, Error err -> ResolvedValue.BadVal err
+                | Error err, _ -> ResolvedValue.BadVal err
+                        
+                
+            
+        | ResolvedValue.String a, ResolvedValue.String b -> 
+            ResolvedValue.String (sprintf("%s%s") a b)
+
+        | ResolvedValue.RelativeDate _rd, ResolvedValue.DateOffset (_qty: int, _tu: TimeUnit) ->
+            // idea here would be to cast the date to ticks, then resolve the dateoffset to ticks
+            // do the arithmetic and cast back to a Relative date with no offset - which should then be an option
+            // either that or to store the result as a int64, in which case we need to match on
+            // Int64, DateOffset as well - perhaps relative date could be an Int64
+            // except that relative date might be "t" and it might be easier to resolve that here
+            ResolvedValue.BadVal "Time arithmetic not implemented yet"
+        |  _ ->
+            let msg = sprintf "Invalid types for operator plus.  Got (%s, %s)" (rv1.ToString()) (rv2.ToString())
+            ResolvedValue.BadVal msg
+    
+        // printfn "adding %f, %f" a b
+        // a + b
 
     
     let makeComparatorOfT (comparator:ComparatorSymbol) (a: 'T, b:'T) =
