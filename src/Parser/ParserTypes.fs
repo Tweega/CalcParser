@@ -194,7 +194,7 @@ module ParserTypes =
     let opLTE = Comparator LessThanOrEquals
 
     type Mappend<'T> = ('T * 'T -> 'T) // change to T -> T -> T? tk
-    type BinaryCalcOp = Mappend<ResolvedValue> * QueueType * QueueType  //make into a record?
+    type BinaryCalcOp = BinaryOperator * QueueType * QueueType  //make into a record?
 
     type ParseResult = 
         | ParseOK of option<string> * string //text matching re, remaining string to parse

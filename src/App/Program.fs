@@ -47,7 +47,7 @@ let rec doArgs(typedTerms: list<TypedTerm>) =
 
 let s = "1 + tagAvg('Sinusoid', " + quote("*-1d") + ", " + quote("*") + ")"
 
-let parseResult = Parser.CalcParser.testParseExpression(expr5)
+let parseResult = Parser.CalcParser.testParseExpression(expr3)
 printfn "ans: %A" parseResult
 
 // this will eventually take a start and end time, possibly a filter expression
@@ -60,7 +60,6 @@ let generateRandomFloats n =
 let getValues(tag: string, eventCount) = 
     generateRandomFloats eventCount
 
-(*
 match parseResult with 
 | Ok (inputs, evaluator) -> 
     let cdtValues = 
@@ -81,7 +80,6 @@ match parseResult with
     printfn "ans: %A" hh
 | Error msg ->
     printfn "%s" msg
-*)
 
 
 

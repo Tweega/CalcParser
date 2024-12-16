@@ -797,8 +797,7 @@ module CalcParser =
     let rec processCalcTree<'T>(
         (term, dt): TypedTerm, 
         inputs: list<Value * DataType>, 
-        calcOps:list<BinaryCalcOp>, 
-        opMap: Map<BinaryOperator, Mappend<ResolvedValue>>) : list<Value * DataType> * list<BinaryCalcOp> = 
+        calcOps:list<BinaryCalcOp>) =
 
         // code in here is ugly due to a binary tree being both a binaryOp and a Value
         // simplifying the code, though  means duplicating all  of the data structures
@@ -814,7 +813,7 @@ module CalcParser =
             match v with 
             | Value.BinaryOpValue bop -> 
                 // recast as BinaryOp and call processTree again.
-                processCalcTree((Term.BinaryOp bop, dt), inputs, calcOps, opMap)
+                processCalcTree((Term.BinaryOp bop, dt), inputs, calcOps)
             | Value.Constant _c -> 
                 inputs, calcOps
             | _ ->
@@ -825,9 +824,9 @@ module CalcParser =
             | Some (lhsTerm, lhsDT), Some (rhsTerm, rhsDT) -> 
                 let lhsQueueType = getQueueType(lhsTerm)    // either an input from 'user' or an output from a sub calculation               
                 let rhsQueueType = getQueueType(rhsTerm)
-                let sym = bop.Operator
-                let funcImpl =  Map.find sym opMap // we could check here that lhsDT and rhsDT are of the same type
-                let calcOps' = (funcImpl, lhsQueueType, rhsQueueType) :: calcOps
+                
+                let funcImpl =  Map.find bop.Operator // we could check here that lhsDT and rhsDT are of the same type
+                let calcOps' = (bop.Operator, lhsQueueType, rhsQueueType) :: calcOps
 
                 // if lhs is a value, need to lay that down before processing rhs, unless rhs is a value in which case it goes down first
                 match rhsTerm with 
@@ -838,8 +837,8 @@ module CalcParser =
                     | Term.BinaryOp _lBop -> 
                         // these are both binary ops - process the rhs first
                         printfn "lhs term is binary"
-                        let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
-                        processCalcTree((lhsTerm, lhsDT), inputs', calcOps'', opMap)
+                        let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps')
+                        processCalcTree((lhsTerm, lhsDT), inputs', calcOps'')
                     | Term.Value v ->
                         printfn "lhs term is value"
 
@@ -847,13 +846,13 @@ module CalcParser =
                         | Value.BinaryOpValue _bopV -> 
                             printfn "lhs term is binary VALUE"
                             // this is actually a binary operator so process rhs first
-                            let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
-                            processCalcTree((lhsTerm, lhsDT), inputs', calcOps'', opMap)
+                            let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps')
+                            processCalcTree((lhsTerm, lhsDT), inputs', calcOps'')
                         | _ ->  
                             // lay lhs value down in inputs before processing rhs
                             printfn "Are we getting  here??"
-                            let (inputs', calcOps'') = processCalcTree((lhsTerm, lhsDT), inputs, calcOps', opMap)
-                            processCalcTree((rhsTerm, rhsDT), inputs', calcOps'', opMap)
+                            let (inputs', calcOps'') = processCalcTree((lhsTerm, lhsDT), inputs, calcOps')
+                            processCalcTree((rhsTerm, rhsDT), inputs', calcOps'')
                 | Term.Value v ->
                     printfn "rhs term is value"
                     match v with 
@@ -864,8 +863,8 @@ module CalcParser =
                         | Term.BinaryOp _lBop -> 
                             // these are both binary ops - process the rhs first
                             printfn "lhs term is binary"
-                            let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
-                            processCalcTree((lhsTerm, lhsDT), inputs', calcOps'', opMap)
+                            let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps')
+                            processCalcTree((lhsTerm, lhsDT), inputs', calcOps'')
                         | Term.Value v ->
                             printfn "lhs term is value"
 
@@ -873,17 +872,17 @@ module CalcParser =
                             | Value.BinaryOpValue _bopV -> 
                                 printfn "lhs term is binary VALUE"
                                 // this is actually a binary operator so process rhs first
-                                let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
-                                processCalcTree((lhsTerm, lhsDT), inputs', calcOps'', opMap)
+                                let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps')
+                                processCalcTree((lhsTerm, lhsDT), inputs', calcOps'')
                             | _ ->  
                                 // lay lhs value down in inputs before processing rhs
                                 printfn "Are we getting  here??"
-                                let (inputs', operators'') = processCalcTree((lhsTerm, lhsDT), inputs, calcOps', opMap)
-                                processCalcTree((rhsTerm, rhsDT), inputs', operators'', opMap)
+                                let (inputs', operators'') = processCalcTree((lhsTerm, lhsDT), inputs, calcOps')
+                                processCalcTree((rhsTerm, rhsDT), inputs', operators'')
                     | _ ->
                         // process the rhs first regardless of lhs
-                        let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps', opMap)
-                        processCalcTree((lhsTerm, lhsDT), inputs', calcOps'', opMap)
+                        let (inputs', calcOps'') = processCalcTree((rhsTerm, rhsDT), inputs, calcOps')
+                        processCalcTree((lhsTerm, lhsDT), inputs', calcOps'')
                     
 
             | _ -> 
@@ -967,7 +966,7 @@ module CalcParser =
             | err -> ResolvedValue.BadVal err.Message
 
     
-    let binop (op:ArithmeticOp, rv1: ResolvedValue, rv2:ResolvedValue) =
+    let evaluateBinaryOp (bop:BinaryOperator, rv1: ResolvedValue, rv2:ResolvedValue) =
         match (rv1, rv2) with 
         | ResolvedValue.Numeric a, ResolvedValue.Numeric b -> 
             let precision = determinePrecision a b
@@ -975,36 +974,45 @@ module CalcParser =
             | Number.Int64 ->
                 match ((toInt64 a), (toInt64 b)) with 
                 | Ok int64A, Ok int64B  ->
-                    match op with 
-                    | Plus -> int64Plus(int64A, int64B)
-                    | Minus -> int64Minus(int64A, int64B)
-                    | Multiply -> int64Multiply(int64A, int64B)
-                    | Divide -> int64Divide(int64A, int64B)
-                    | NoOp -> ResolvedValue.BadVal "NoOp encountered"
-                    | Power -> 
-                        match (toFloat a), (toFloat b) with
-                        | Ok floatA, Ok floatB -> 
-                            floatPower(precision, floatA, floatB) //int64 does not support power operator so try with float and hope for the best
-                        | _, Error err -> ResolvedValue.BadVal err
-                        | Error err, _ -> ResolvedValue.BadVal err
-                
-                    | Modulo -> int64Modulo(int64A, int64B)
+                    match bop with 
+                    | BinaryOperator.Operator (op, _) ->
+                        match op with
+                        | Plus -> int64Plus(int64A, int64B)
+                        | Minus -> int64Minus(int64A, int64B)
+                        | Multiply -> int64Multiply(int64A, int64B)
+                        | Divide -> int64Divide(int64A, int64B)
+                        | NoOp -> ResolvedValue.BadVal "NoOp encountered"
+                        | Power -> 
+                            match (toFloat a), (toFloat b) with
+                            | Ok floatA, Ok floatB -> 
+                                floatPower(precision, floatA, floatB) //int64 does not support power operator so try with float and hope for the best
+                            | _, Error err -> ResolvedValue.BadVal err
+                            | Error err, _ -> ResolvedValue.BadVal err
                     
+                        | Modulo -> int64Modulo(int64A, int64B)
+
+                    | BinaryOperator.Comparator (_sym) -> ResolvedValue.BadVal "Not implemented yet"
+
                 | _, Error err -> ResolvedValue.BadVal err
                 | Error err, _ -> ResolvedValue.BadVal err
             | _ ->
                 match ((toFloat a), (toFloat b)) with 
                 | Ok floatA, Ok floatB  ->
-                    match op with    
-                    | Plus -> floatPower(precision, floatA, floatB)
-                    | Minus -> floatPower(precision, floatA, floatB)
-                    | Multiply -> floatPower(precision, floatA, floatB)
-                    | Divide -> floatPower(precision, floatA, floatB)
-                    | NoOp -> ResolvedValue.BadVal "NoOp encountered"
-                    | Power -> floatPower(precision, floatA, floatB)
-                    | Modulo -> floatPower(precision, floatA, floatB)
+                    match bop with 
+                    | BinaryOperator.Operator (op, _) ->
+                        match op with    
+                        | Plus -> floatPower(precision, floatA, floatB)
+                        | Minus -> floatPower(precision, floatA, floatB)
+                        | Multiply -> floatPower(precision, floatA, floatB)
+                        | Divide -> floatPower(precision, floatA, floatB)
+                        | NoOp -> ResolvedValue.BadVal "NoOp encountered"
+                        | Power -> floatPower(precision, floatA, floatB)
+                        | Modulo -> floatPower(precision, floatA, floatB)
+                    | BinaryOperator.Comparator (_sym) -> ResolvedValue.BadVal "BinaryOperator.Comparator Not implemented yet"
                 | _, Error err -> ResolvedValue.BadVal err
                 | Error err, _ -> ResolvedValue.BadVal err
+
+
                         
                 
             
@@ -1067,14 +1075,9 @@ module CalcParser =
             | Constant.StringConst str -> 
                 Ok (ResolvedValue.String str), inputs, outputs
 
-    // input is a list of calc ops (mappend that merges 2 values of the same type, 
-    // plus 2 queues - one that holds values fed into the top level function, 
-    // and another that holds values for sub functions
-    // returns a function that will take a list of arguments (all of type 'T)
-    // when called, the function folds over the calc ops
-    // getValue looks at next item in the queue and if this is of type input gets a value from the input queue, otherwise from the output queue (which is results of calcs)
-
-
+    // creates a single function from a sequenced list of binary operations which have been ordered in the parsing process
+    // so that dependencies are executed first and interim values put on an output stack from where they can
+    // be consumed, along with the input stack passed in
     let createBinOpEvaluator<'T>(ops:list<BinaryCalcOp>) 
         : list<ResolvedValue> -> Result<ResolvedValue,string> =
         //pass in number of args? tk
@@ -1087,14 +1090,15 @@ module CalcParser =
             let outputs: list<ResolvedValue> = []
             let (ins, outs) =
                 ops |>
-                List.fold(fun (inAcc, outAcc) (mappend, lhsQ, rhsQ) -> 
+                List.fold(fun (inAcc, outAcc) (bop, lhsQ, rhsQ) -> 
                     let (lhsVal, inputsLHS: list<ResolvedValue>,  outputsLHS: list<ResolvedValue>) = 
                         getResolvedValue(lhsQ, inAcc, outAcc)
                     let (rhsVal, inputsRHS: list<ResolvedValue>,  outputsRHS: list<ResolvedValue>) = 
                         getResolvedValue(rhsQ, inputsLHS, outputsLHS)
                     match (lhsVal, rhsVal) with 
                     | (Ok lhs, Ok rhs) ->
-                        let t:ResolvedValue = mappend(lhs, rhs) //mappend calls the plus/minus etc function
+                        //let t:ResolvedValue = mappend(lhs, rhs) //mappend calls the plus/minus etc function
+                        let t:ResolvedValue = evaluateBinaryOp(bop, lhs, rhs)
                         (inputsRHS, t :: outputsRHS)
                     | _ -> 
                         printfn "Not enough values" // we should validate initial input length at the beginning
@@ -1170,46 +1174,7 @@ module CalcParser =
         | Ok binOp -> 
             printfn "binOp:\n%A" binOp
             // perhaps operators need not be part of this map - it is hard to imagine how their implementations might change
-            let numericOps = 
-                [
-                    (opPlus, plus)  // these functions may need wrappers so they operate on a DU of float| string
-                    (opMinus, minus)
-                    (opMultiply, multiply)
-                    (opDivide, divide)
-                    // (Operator NoOp, this would be an error)
-                    (opPower, power)
-                    (opModulo, modulo)
-                    // (opEq, makeComparator Equals)
-                    // (opGT, makeComparator GreaterThan)
-                    // (opGTE, makeComparator GreaterThanOrEquals)
-                    // (opLT, makeComparator LessThan)
-                    // (opLTE, makeComparator LessThanOrEquals)
-
-                ]
-                |> List.map(fun (binOp, floatImpl) -> 
-                    // the intention here is to create a wrapping function that 'lifts' numeric values to floats
-                    // then executes the float -> float -> float function, as in plus
-                    // and then drops the value to a lower precision if appropriate
-                    let numericHandler = fun (rv1:ResolvedValue, rv2:ResolvedValue) ->
-                        match (rv1, rv2) with 
-                        | ResolvedValue.Numeric a, ResolvedValue.Numeric b -> 
-                            let float64A = (toFloat a) //|> LiftedValue.Numeric
-                            let float64B = (toFloat b) //|> LiftedValue.Numeric
-                            let float64Result = floatImpl(float64A, float64B)
-                            // if neither original arguments was double reduce precision to highest precision of the inputs
-                            let precision = determinePrecision a b
-                            let droppedValue = castToOriginalPrecision float64Result precision
-                            droppedValue |> ResolvedValue.Numeric
-                        | ResolvedValue.String a, ResolvedValue.String b -> 
-                            ResolvedValue.String (sprintf("%s%s") a b)
-                        |  _ ->
-                            let msg = sprintf "Invalid types for operator : %s.  Got (%s, %s)" (binOp.OpToString()) (rv1.ToString()) (rv2.ToString())
-                            ResolvedValue.BadVal msg
-                    
-                    (binOp, numericHandler)
-                ) 
-                //|> Map.ofList
-
+            
             let comparatorOps =                 
                 [
                     (opEq, Equals)
@@ -1244,10 +1209,10 @@ module CalcParser =
                     (binOp, numericHandler)
                 ) 
 
-            let joinedLists = List.Join([comparatorOps; numericOps])
-            let opMap = joinedLists |> Map.ofList
+            //let joinedLists = List.Join([comparatorOps; numericOps])
+            //let opMap = joinedLists |> Map.ofList
 
-            let (inputs: list<Value * DataType>), (operators: list<BinaryCalcOp>) = processCalcTree(binOp, [], [], opMap)
+            let (inputs: list<Value * DataType>), (operators: list<BinaryCalcOp>) = processCalcTree(binOp, [], [])
             
             printfn "%A" inputs
             printfn "%A" operators
