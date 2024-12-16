@@ -1001,13 +1001,13 @@ module CalcParser =
                     match bop with 
                     | BinaryOperator.Operator (op, _) ->
                         match op with    
-                        | Plus -> floatPower(precision, floatA, floatB)
-                        | Minus -> floatPower(precision, floatA, floatB)
-                        | Multiply -> floatPower(precision, floatA, floatB)
-                        | Divide -> floatPower(precision, floatA, floatB)
+                        | Plus -> floatPlus(precision, floatA, floatB)
+                        | Minus -> floatMinus(precision, floatA, floatB)
+                        | Multiply -> floatMultiply(precision, floatA, floatB)
+                        | Divide -> floatDivide(precision, floatA, floatB)
                         | NoOp -> ResolvedValue.BadVal "NoOp encountered"
                         | Power -> floatPower(precision, floatA, floatB)
-                        | Modulo -> floatPower(precision, floatA, floatB)
+                        | Modulo -> floatModulo(precision, floatA, floatB)
                     | BinaryOperator.Comparator (_sym) -> ResolvedValue.BadVal "BinaryOperator.Comparator Not implemented yet"
                 | _, Error err -> ResolvedValue.BadVal err
                 | Error err, _ -> ResolvedValue.BadVal err
@@ -1080,7 +1080,7 @@ module CalcParser =
     // be consumed, along with the input stack passed in
     let createBinOpEvaluator<'T>(ops:list<BinaryCalcOp>) 
         : list<ResolvedValue> -> Result<ResolvedValue,string> =
-        //pass in number of args? tk
+        // pass in number of args? tk
         // how will this work with functions, where the inputs may have different types? tk
         // ideally functions will not have to unbox all their inputs, but that might be the only way to do it
         fun(inputs: list<ResolvedValue>) ->

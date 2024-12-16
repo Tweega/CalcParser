@@ -57,16 +57,21 @@ let generateRandomFloats n =
     let random = System.Random()
     List.init n (fun _ -> random.NextDouble())
 
-let getValues(tag: string, eventCount) = 
+let getRandomValues(tag: string, eventCount) = 
     generateRandomFloats eventCount
+
+let getValues(tag: string, start:int, eventCount:int) = 
+    let f = (float) start
+    let g = f + (float) (eventCount - 1)
+    [f .. g]
 
 match parseResult with 
 | Ok (inputs, evaluator) -> 
     let cdtValues = 
-        getValues("CDT158", 10)
+        getValues("CDT158", 1, 10)
         |> resolveFloats
     let sinusoidValues = 
-        getValues("SINUSOID", 10)
+        getValues("SINUSOID", 5, 10)
         |> resolveFloats
 
     let xx = List.transpose([cdtValues; sinusoidValues])
