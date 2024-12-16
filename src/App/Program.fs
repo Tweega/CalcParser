@@ -8,7 +8,7 @@ open Parser.JutzParser
 // let simple = testParseExpression("1 + 2")
 // let hh = simple([123;321])
 // let nestedBrackets = testParseExpression("(1 + (2 * 3))")
-let quote(s:string) =
+let quoteString(s:string) =
     let sQuote = (string) quot
     (string) sQuote + s + sQuote
 
@@ -17,6 +17,7 @@ let expr = "5 * ((1 + 2) * (3 + 4))"
 let expr1 = "1 - 2 - 3 * 4" // this gives me unecessary rhs parentheses 1 - 2 - {3 * 4}
 let expr2 = "(1 - 2) - 3 - 4" // this gives me unecessary rhs parentheses 1 - 2 - {3 * 4}
 let expr3 = "3 + 'CDT158' / 'Sinusoid'"
+let expr6 = quoteString("pet") + " + 'CDT158' + 'Sinusoid'"
 let expr4 = "1+1"
 let expr5 = "1+2d"
 
@@ -24,6 +25,12 @@ let resolveFloats(values) =
     values |> 
     List.map(fun i -> 
         ResolvedValue.Numeric (NumericValue.Float64 ((float) i))
+    )
+
+let resolveStrings(values) = 
+    values |> 
+    List.map(fun i -> 
+        ResolvedValue.String i
     )
 
 (*
@@ -47,7 +54,7 @@ let rec doArgs(typedTerms: list<TypedTerm>) =
 
 let s = "1 + tagAvg('Sinusoid', " + quote("*-1d") + ", " + quote("*") + ")"
 
-let parseResult = Parser.CalcParser.testParseExpression(expr3)
+let parseResult = Parser.CalcParser.testParseExpression(expr6)
 printfn "ans: %A" parseResult
 
 // this will eventually take a start and end time, possibly a filter expression
@@ -65,19 +72,36 @@ let getValues(tag: string, start:int, eventCount:int) =
     let g = f + (float) (eventCount - 1)
     [f .. g]
 
+if 1 = 2 then
+    match parseResult with 
+    | Ok (inputs, evaluator) -> 
+        let cdtValues = 
+            getValues("CDT158", 1, 10)
+            |> resolveFloats
+        let sinusoidValues = 
+            getValues("SINUSOID", 5, 10)
+            |> resolveFloats
+
+        let xx = List.transpose([cdtValues; sinusoidValues])
+        let hh = xx |> List.map evaluator
+        // printfn "%A" values
+        printfn "ans: %A" hh
+    | Error msg ->
+        printfn "%s" msg
+
 match parseResult with 
 | Ok (inputs, evaluator) -> 
     let cdtValues = 
-        getValues("CDT158", 1, 10)
-        |> resolveFloats
+        ["Cat"; "Dog"] 
+        |> resolveStrings
     let sinusoidValues = 
-        getValues("SINUSOID", 5, 10)
-        |> resolveFloats
+        ["Rabbit"; "Hampster"] 
+        |> resolveStrings
 
     let xx = List.transpose([cdtValues; sinusoidValues])
     let hh = xx |> List.map evaluator
-    
-    
+
+
     // let rvs = resolveFloats([1.1; 2.2])
     // let ans = rvs |> evaluator
 
