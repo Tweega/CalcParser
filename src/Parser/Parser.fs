@@ -182,7 +182,30 @@ module CalcParser =
                     ParseOK (maybeStr, remaining)
                     
         | Error msg -> ParseError msg
-        
+
+    let parseAFDateString(s:string) =
+        match parseNumber(s) with 
+        | ParseOK (maybeNewValue, remaining) ->
+            // check if the front of remaining matches a time period
+
+            match maybeNewValue with 
+            | Some str ->
+                let reAFDateString: string = sprintf @"^([A-Za-z]+)" // strings are enclosed in double quotes
+                match reApply(reAFDateString, remaining) with 
+                | Ok (Some afDateStr), remaining' -> 
+                    match afDateStr.ToLower() with 
+                    | "s" 
+                    | "m" 
+                    | "d" 
+                    | "mo"
+                    | "y" -> ParseOK (Some (str + afDateStr), remaining')
+                    | _ -> ParseOK (None, s)
+                    
+                | _ ->
+                    ParseOK (None, s)
+                        
+            | None -> ParseOK (None, s)
+        | ParseError err -> ParseError err
     
     let parseFunctionName(s:string) =
         let reString: string = sprintf @"^([A-Za-z][A-Za-z0-9]*)\s*\(" //function name starts with alpha optionally continues with alphaNum and terminates with open parenthesis
@@ -305,6 +328,19 @@ module CalcParser =
         | ParseError msg ->
             Error msg
 
+    let parseAndHandleAFDateString(input: string) =
+        match parseAFDateString(input) with 
+        | ParseOK (maybeMatch, remaining) -> 
+            match maybeMatch with 
+            | Some str -> 
+                let term = str |> (StringConst >> Value.Constant >> Term.Value) //create a new TimeConst?
+                
+                Ok (Some (term, DataType.String), remaining)
+            | None -> Ok (None, input)
+            
+        | ParseError msg ->
+            Error msg
+
     let parseAndHandleNumber(input: string) =
         match parseNumber(input) with 
         | ParseOK (maybeMatch, remaining) -> 
@@ -401,7 +437,7 @@ module CalcParser =
         let parseAndHandleBrackets' = parseAndHandleBrackets dataTypeMap
         let parseAndHandleFunction' = parseAndHandleFunction dataTypeMap
 
-        let parseAndHandleValue = parseAndHandleField' >=> parseAndHandleNumber >=> parseAndHandleString >=> parseAndHandleBrackets'
+        let parseAndHandleValue = parseAndHandleField' >=> parseAndHandleAFDateString >=> parseAndHandleNumber >=> parseAndHandleString >=> parseAndHandleBrackets'
         let parseAndHandleTerm = parseAndHandleValue >=> parseAndHandleBinaryOperator >=> parseAndHandleFunction' >=> parseAndHandleConditional'
 
         let rec mergeOpVals (operators: list<BinaryOp>, values:list<Value * DataType>, acc:list<BinaryOp>) =
@@ -913,7 +949,8 @@ module CalcParser =
     // getValue looks at next item in the queue and if this is of type input gets a value from the input queue, otherwise from the output queue (which is results of calcs)
 
 
-    let createCalcEvaluator<'T>(ops:list<BinaryCalcOp>) = 
+    let createBinOpEvaluator<'T>(ops:list<BinaryCalcOp>) 
+        : list<ResolvedValue> -> Result<ResolvedValue,string> =
         //pass in number of args? tk
         // how will this work with functions, where the inputs may have different types? tk
         // ideally functions will not have to unbox all their inputs, but that might be the only way to do it
@@ -931,7 +968,7 @@ module CalcParser =
                         getResolvedValue(rhsQ, inputsLHS, outputsLHS)
                     match (lhsVal, rhsVal) with 
                     | (Ok lhs, Ok rhs) ->
-                        let t:ResolvedValue = mappend(lhs, rhs)
+                        let t:ResolvedValue = mappend(lhs, rhs) //mappend calls the plus/minus etc function
                         (inputsRHS, t :: outputsRHS)
                     | _ -> 
                         printfn "Not enough values" // we should validate initial input length at the beginning
@@ -950,7 +987,47 @@ module CalcParser =
                 | _ ->
                     Error "Unused inputs"
 
-            
+    let timeServer(timeNow: System.DateTime)(timeExpression:string) = 
+        let timeT = timeNow
+        let timeY = timeNow
+
+        // check for fully qualified time
+        // check for time addition
+        let jj = parseExpression Map.empty timeExpression
+        // the expression coming in could be of arbitrary length
+        // so we need to parse it as a binary op tree.
+
+        jj
+
+    let tagMax(inputs: list<ResolvedValue>) =
+        // functions should not be taking output of other boolean operations?
+        // tagMax takes 3 arguments
+        match inputs with 
+        | _tagName :: _startTime :: _endTime :: [] ->
+            // time parameters need parsing to date times relative to some Now
+            // unless times have already been parsed.
+            // the (decisive) advantage of not parsing them until now
+            // is that they can be passed as is to AF if we have access to that.
+            // this function would then construct and call the command to interrogate AF
+
+            Ok (ResolvedValue.Numeric (NumericValue.Float64 12.3))
+        | _ -> Error "Wrong number of inputs in tagMax"
+
+
+
+    let createFunctionEvaluator(functionName:FunctionName, functionArgs:list<FunctionArg>)
+        : list<ResolvedValue> -> Result<ResolvedValue,string> =
+
+
+        // somewhere there will be a map from which I can get details for functionName.
+        // function args are either constants - is a tag name a constant? 
+        // or they are InputValues - either a Field or a Function - tag is a field
+        // as things stand
+
+        // simulate a lookup of a function - say on
+        let functionToUse = tagMax
+
+        functionToUse
 
     let testParseExpression(expr:string) = 
         let dtMap = 
@@ -1049,7 +1126,7 @@ module CalcParser =
             printfn "%A" inputs
             printfn "%A" operators
             
-            let evaluator = createCalcEvaluator(operators)
+            let evaluator = createBinOpEvaluator(operators)
 
             // map inputs (Typed Values) to input values
             let rec tryMapTypedValuesToInputValues(ins: list<TypedValue>)  =

@@ -17,6 +17,8 @@ let expr = "5 * ((1 + 2) * (3 + 4))"
 let expr1 = "1 - 2 - 3 * 4" // this gives me unecessary rhs parentheses 1 - 2 - {3 * 4}
 let expr2 = "(1 - 2) - 3 - 4" // this gives me unecessary rhs parentheses 1 - 2 - {3 * 4}
 let expr3 = "3 + 'CDT158' / 'Sinusoid'"
+let expr4 = "1+1"
+let expr5 = "1+2d"
 
 let resolveFloats(values) = 
     values |> 
@@ -43,8 +45,10 @@ let rec doArgs(typedTerms: list<TypedTerm>) =
     hh
 *)
 
+let s = "1 + tagAvg('Sinusoid', " + quote("*-1d") + ", " + quote("*") + ")"
 
-let parseResult = Parser.CalcParser.testParseExpression(expr3)
+let parseResult = Parser.CalcParser.testParseExpression(expr5)
+printfn "ans: %A" parseResult
 
 // this will eventually take a start and end time, possibly a filter expression
 
@@ -58,7 +62,7 @@ let getValues(tag: string, eventCount) =
 
 (*
 match parseResult with 
-| Ok (values, evaluator) -> 
+| Ok (inputs, evaluator) -> 
     let cdtValues = 
         getValues("CDT158", 10)
         |> resolveFloats
@@ -77,12 +81,12 @@ match parseResult with
     printfn "ans: %A" hh
 | Error msg ->
     printfn "%s" msg
-
 *)
+
+
 
 // printfn "%f" ans
 
-let s = "1 + tagAvg('Sinusoid', " + quote("*-1d") + ", " + quote("*") + ")"
 // let rs = s |> resolveFunctions
 // //--------------------
 // let yy = Parser.CalcParser.parseExpression(s)
