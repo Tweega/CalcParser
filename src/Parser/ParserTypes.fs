@@ -66,6 +66,8 @@ module ParserTypes =
     | Boolean
     | Unknown
     | BadVal of string
+    | DateTime
+    | DateOffset
 
     [<RequireQualifiedAccess>]
     type NumericValue = 
@@ -85,7 +87,7 @@ module ParserTypes =
     | Hour
     | Minute
     | Second
-    | BadVal of string
+    | Undefined of string
     with 
         // use module instead? tk
         static member toTimeUnit(str:string) = 
@@ -97,10 +99,25 @@ module ParserTypes =
             | "h" -> TimeUnit.Year
             | "m" -> TimeUnit.Year
             | "s" -> TimeUnit.Year
-            | _ ->TimeUnit.BadVal str 
+            | _ -> TimeUnit.Undefined str 
+
+        static member getDurationSeconds(tu: TimeUnit) = 
+            match tu with 
+            | Year   -> 365 * 24 * 3600     // Assuming a non-leap year: 365 days
+            | Month  -> 30 * 24 * 3600      // Assuming an average month of 30 days
+            | Week   -> 7 * 24 * 3600       // 7 days in a week
+            | Day    -> 24 * 3600           // 24 hours in a day
+            | Hour   -> 3600                // 1 hour = 3600 seconds
+            | Minute -> 60                  // 1 minute = 60 seconds
+            | Second -> 1                   // 1 second = 1 second
+            | Undefined _ -> 0
+
+        static member ticksPerSecond = 10_000_000L // 10 million ticks per second
+
 
     // | Millisecond ?
 
+    // type DateOffset = int
 
     [<RequireQualifiedAccess>]
     type ResolvedValue = 
@@ -108,18 +125,10 @@ module ParserTypes =
     | String of string
     | Boolean of bool
     | BadVal of string
-    | RelativeDate of string
+    | FixedDate of string
     | DateOffset of int * TimeUnit
     // need to add lists tk
 
-    // | Boolean?
-
-    [<RequireQualifiedAccess>]
-    type LiftedValue = 
-    | Numeric of float
-    | String of string
-    | Boolean of bool
-    | BadVal of string
 
    // [<RequireQualifiedAccess>]
     type Constant = 
@@ -129,6 +138,7 @@ module ParserTypes =
     // there will also be AF specific constants
 
     type ReturnType = DataType
+    type DurationSeconds = int
 
     [<RequireQualifiedAccess>]
     type BinaryOp = {
@@ -153,6 +163,8 @@ module ParserTypes =
     | Conditional of Conditional // Predicate, OnSuccess, OnFail
     // | Function of string * list<Value * DataType> // labelled bracketed expression
     | Function of string * ReturnType * list<TypedValue> // labelled bracketed expression
+    | FixedDate of System.DateTime
+    | TimeOffset of TimeUnit * int
 
     and [<RequireQualifiedAccess>] Term = 
     | Value of Value

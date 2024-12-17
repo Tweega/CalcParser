@@ -5,6 +5,39 @@ module CalcParser =
     open System.Text.RegularExpressions
     open Tweega.Utils    
     open Microsoft.FSharp.Core.Operators.Checked
+    open System
+
+
+    type TimeAlias =
+    | Yesterday
+    | Today
+    | Monday
+    | Tuesday
+    | Wednesday
+    | Thursday
+    | Friday
+    | Saturday
+    | Sunday
+    with 
+        static member getEquivalentDate (now: DateTime) (timeAlias: TimeAlias) =
+            let currentDay = now.DayOfWeek // Current day as DayOfWeek enum
+
+            let daysUntil (targetDay: DayOfWeek) =
+                // Calculate difference to get back to the target day
+                let offset = (int targetDay) - (int currentDay)
+                if offset <= 0 then offset - 7 else offset // Go back 1 week if needed
+
+            match timeAlias with
+            | Yesterday -> now.Date.AddDays(-1.0) // Midnight yesterday
+            | Today -> now.Date                  // Midnight today
+            | Monday -> now.Date.AddDays(daysUntil DayOfWeek.Monday |> float)
+            | Tuesday -> now.Date.AddDays(daysUntil DayOfWeek.Tuesday |> float)
+            | Wednesday -> now.Date.AddDays(daysUntil DayOfWeek.Wednesday |> float)
+            | Thursday -> now.Date.AddDays(daysUntil DayOfWeek.Thursday |> float)
+            | Friday -> now.Date.AddDays(daysUntil DayOfWeek.Friday |> float)
+            | Saturday -> now.Date.AddDays(daysUntil DayOfWeek.Saturday |> float)
+            | Sunday -> now.Date.AddDays(daysUntil DayOfWeek.Sunday |> float)
+
 
     [<RequireQualifiedAccessAttribute>]
     type TermType =
@@ -13,6 +46,34 @@ module CalcParser =
 
     let quot = '\u0022'    
 
+    open System.Text.RegularExpressions
+
+
+    let reApply(re: string, s: string) =
+        // s is a string to be parsed and it is expected that this operation will match some or none characters from the front
+        // either as a direct match or as a single group in which case some marker characters, such as brackets will be thrown away
+        printfn "reApply has received [%s]" s
+        let rx = Regex(re, RegexOptions.IgnoreCase + RegexOptions.Multiline +  RegexOptions.Compiled)
+        let m = rx.Match(s)
+
+        match m.Success with 
+        | true -> 
+            let (matchResult, newS) = 
+                match m.Captures.Count with
+                | 1 ->  // working here on whitespace issue.  we may need to match on whitespace separately
+                    printfn "We have a match: %A %d" m.Captures[0].Value m.Length
+                    (Ok (Some m.Groups[1].Value), s[m.Length ..])
+                | _ -> 
+                    let msg = sprintf "More than one group matched in reg exp: %s on string: %s" re s
+                    (Error msg), s
+
+            matchResult, newS    
+
+        | false -> 
+            // printfn "no match: %s :%s " re s
+            Ok None, s
+
+    
     let determinePrecision (a: NumericValue) (b: NumericValue) : Number =
         // Determines the highest precision between two values
         match a, b with
@@ -75,30 +136,6 @@ module CalcParser =
             | Error msg -> Error msg
             
 
-    let reApply(re: string, s: string) =
-        // s is a string to be parsed and it is expected that this operation will match some or none characters from the front
-        // either as a direct match or as a single group in which case some marker characters, such as brackets will be thrown away
-        printfn "reApply has received [%s]" s
-        let rx = Regex(re, RegexOptions.IgnoreCase + RegexOptions.Multiline +  RegexOptions.Compiled)
-        let m = rx.Match(s)
-
-        match m.Success with 
-        | true -> 
-            let (matchResult, newS) = 
-                match m.Captures.Count with
-                | 1 ->  // working here on whitespace issue.  we may need to match on whitespace separately
-                    printfn "We have a match: %A %d" m.Captures[0].Value m.Length
-                    (Ok (Some m.Groups[1].Value), s[m.Length ..])
-                | _ -> 
-                    let msg = sprintf "More than one group matched in reg exp: %s on string: %s" re s
-                    (Error msg), s
-
-            matchResult, newS    
-
-        | false -> 
-            // printfn "no match: %s :%s " re s
-            Ok None, s
-
     let parseWhitespace(s: string)  =
         let reWhitespace: string = @"^\s+"
         let newValueResult, remaining = reApply(reWhitespace, s)  
@@ -122,6 +159,40 @@ module CalcParser =
         match reApply(re, s') with 
         | Ok maybeMatch, remaining -> Ok maybeMatch, remaining
         | (Error msg), remaining-> Error msg, remaining
+
+    let parseDate input =
+        // Define the regex pattern
+        let pattern =                     
+            @"^(0?[1-9]|[12][0-9]|3[01])-" + // Day with optional leading 0
+            @"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-" + // Month
+            @"(\d{4})" + // Year
+            @"(?:\s(\d{1,2})(?::(\d{2})(?::(\d{2}))?)?)" // Optional time (HH:MM:SS)
+        
+        let regex = Regex(pattern)
+        
+        // Match the input string
+        let m = regex.Match(input)
+        if m.Success then
+            // Extract components
+            let day = m.Groups.[1].Value
+            let month = m.Groups.[2].Value
+            let year = m.Groups.[3].Value
+            let hour = if m.Groups.[4].Success then m.Groups.[4].Value else "0"
+            let minute = if m.Groups.[5].Success then m.Groups.[5].Value else "0"
+            let second = if m.Groups.[6].Success then m.Groups.[6].Value else "0"
+
+            let dateStr = (String.Join(":", [day; month; year; hour; minute; second]))
+            let remaining = input.Substring(m.Length)
+
+            ParseOK (Some dateStr, remaining)
+        else
+            let reTimeAlias = "^\s*([Yy]esterday|[Yy]|[Tt]omorrow|[Tt])\b"
+            let newValueResult, remaining = reApply(reTimeAlias, input)  
+            match newValueResult with 
+            | Ok maybeNewValue ->
+                ParseOK (maybeNewValue, remaining)
+            | Error err ->
+                ParseError err
 
     let parseNumber(s: string) =
         printfn "ParseNumber %s" s
@@ -198,28 +269,29 @@ module CalcParser =
                     
         | Error msg -> ParseError msg
 
-    let parseAFDateString(s:string) =
-        match parseNumber(s) with 
-        | ParseOK (maybeNewValue, remaining) ->
+    let parseTimeOffset(timeExpr:string) =
+        // eg '* + 2d'
+        // do we want to parse the expression out at this point or guess that we have a
+
+        // are we allowed floats - or anything that does not convert to int?
+
+        match parseNumber(timeExpr) with 
+        | ParseOK (maybeNumber, remaining) ->
             // check if the front of remaining matches a time period
 
-            match maybeNewValue with 
-            | Some str ->
+            match maybeNumber with 
+            | Some numStr ->
                 let reAFDateString: string = sprintf @"^([A-Za-z]+)" // strings are enclosed in double quotes
                 match reApply(reAFDateString, remaining) with 
                 | Ok (Some afDateStr), remaining' -> 
-                    match afDateStr.ToLower() with 
-                    | "s" 
-                    | "m" 
-                    | "d" 
-                    | "mo"
-                    | "y" -> ParseOK (Some (str + afDateStr), remaining')
-                    | _ -> ParseOK (None, s)
+                    match TimeUnit.toTimeUnit(afDateStr) with 
+                    | TimeUnit.Undefined _ -> ParseOK (None, timeExpr)
+                    | _tu ->  ParseOK (Some (numStr + ":" + afDateStr), remaining')
                     
                 | _ ->
-                    ParseOK (None, s)
+                    ParseOK (None, timeExpr)
                         
-            | None -> ParseOK (None, s)
+            | None -> ParseOK (None, timeExpr)
         | ParseError err -> ParseError err
     
     let parseFunctionName(s:string) =
@@ -343,18 +415,116 @@ module CalcParser =
         | ParseError msg ->
             Error msg
 
-    let parseAndHandleAFDateString(input: string) =
-        match parseAFDateString(input) with 
+    let parseAndHandleTimeOffset(input: string) =
+        match parseTimeOffset(input) with 
         | ParseOK (maybeMatch, remaining) -> 
             match maybeMatch with 
-            | Some str -> 
-                let term = str |> (StringConst >> Value.Constant >> Term.Value) //create a new TimeConst?
-                
-                Ok (Some (term, DataType.String), remaining)
+            | Some str -> //e.g. "3:y"
+                match (str.Split([|':'|]) |> List.ofArray) with 
+                | intStr :: tuStr :: [] ->
+                    let ttu = TimeUnit.toTimeUnit tuStr
+                    match System.Int32.TryParse(intStr) with 
+                        | true, (num:int32) -> 
+                            let term = ((Value.TimeOffset (ttu, num))|> Term.Value)
+                            Ok (Some (term, DataType.String), remaining)
+                        | false, _ -> 
+                            Ok (None, input) 
+
+                | _ ->
+                    let msg = sprintf "Error in parseAndHandleTimeOffset: Input string does not have the expected format. (%s)"  input
+                    Error msg
+
             | None -> Ok (None, input)
             
         | ParseError msg ->
             Error msg
+
+
+
+    let monthToInt (month:string) =
+        match month.ToLower() with
+        | "jan" -> 1 | "feb" -> 2 | "mar" -> 3 | "apr" -> 4 | "may" -> 5 | "jun" -> 6
+        | "jul" -> 7 | "aug" -> 8 | "sep" -> 9 | "oct" -> 10 | "nov" -> 11 | "dec" -> 12
+        | _ -> failwith "Invalid month"
+
+
+    let parseAndHandleFixedDate(input: string) =
+        match parseDate(input) with 
+        | ParseOK (maybeMatch, remaining) -> 
+            match maybeMatch with 
+            | Some str -> 
+                match (str.Split([|':'|]) |> List.ofArray) with 
+                | day :: month :: year :: hours :: minutes :: seconds :: [] ->
+                    try
+                        let dayInt = int day
+                        let monthInt = monthToInt month
+                        let yearInt = int year
+                        let hourInt = int hours
+                        let minuteInt = int minutes
+                        let secondInt = int seconds
+
+                        let dateTime = DateTime(yearInt, monthInt, dayInt, hourInt, minuteInt, secondInt)
+                        let term = dateTime |> (Value.FixedDate >> Term.Value) 
+                        Ok (Some (term, DataType.DateTime), remaining)
+                    with
+                    |  :? FormatException as err -> 
+                        Error err.Message
+                    | :? ArgumentOutOfRangeException as err->
+                        Error err.Message
+                | _ ->
+                    let msg = sprintf "Error in parseAndHandleFixedDate: Input string does not have the expected format. (%s)"  input
+                    Error msg
+            | None -> Ok (None, input)
+            
+        | ParseError msg ->
+            Error msg
+
+    let parseTimeUnit (input: string) =
+        let reTimeUnit = @"^\s*(y|mo|w|d|h|m|s)\b"
+        let newValueResult, remaining = reApply(reTimeUnit, input)  
+        match newValueResult with 
+        | Ok maybeNewValue ->
+            ParseOK (maybeNewValue, remaining)
+        | Error err ->
+            ParseError err
+        
+
+    let parseAndHandleTimeUnit(input: string) =
+        // we first need an integer (not sure if we need to handle floats)
+        match parseNumber(input) with 
+        | ParseOK (maybeMatch, remaining) -> 
+            match maybeMatch with 
+            | Some intStr -> 
+                match System.Int32.TryParse(intStr) with 
+                | true, (n:int32) -> 
+                    match parseTimeUnit(remaining) with 
+                    | ParseOK (maybeMatch, remaining') -> 
+                        match maybeMatch with 
+                        | Some tu ->
+                            let maybeTU = 
+                                match tu.ToLower() with
+                                | "y"  -> Some TimeUnit.Year
+                                | "mo" -> Some TimeUnit.Month
+                                | "w"  -> Some TimeUnit.Week
+                                | "d"  -> Some TimeUnit.Day
+                                | "h"  -> Some TimeUnit.Hour
+                                | "m"  -> Some TimeUnit.Minute
+                                | "s"  -> Some TimeUnit.Second
+                                | _    -> None // Catch-all for unexpected cases
+                            
+                            match maybeTU with 
+                            | Some timeUnit -> 
+                                let term = (timeUnit, n) |> (Value.TimeOffset >> Term.Value)
+                                Ok (Some (term, DataType.DateOffset), remaining')
+                            | None -> Ok (None, input)
+                            
+                        | _ -> Ok (None, input)
+                    | ParseError err ->
+                        Error err
+                | false, _ ->  Ok (None, input) // expression does not start with a number
+            | None -> Ok (None, input)
+        | ParseError err -> Error err
+
 
     let parseAndHandleNumber(input: string) =
         match parseNumber(input) with 
@@ -364,28 +534,6 @@ module CalcParser =
                 let term = str |> (NumericalConst >> Value.Constant >> Term.Value)
                 // assume that all numbers are float64 for the moment 0 this needs to change tk
                 Ok (Some (term, DataType.Numeric Number.Float64), remaining)
-            | None -> Ok (None, input)
-            
-        | ParseError msg ->
-            Error msg
-    
-    
-    let parseAndHandleField(dataTypeMap: Map<string, DataType>) (input: string) =
-        match parseField(input) with 
-        | ParseOK (maybeMatch, remaining) -> 
-            match maybeMatch with 
-            | Some str -> 
-                let maybeDT = Map.tryFind (str.ToUpper()) dataTypeMap
-                match maybeDT with 
-                | Some dt ->
-                    let term = str |> ((Value.Field >> Term.Value))
-                    // assume fields emit float values for the moment - this needs to change tk
-                    // working here.  we need to pass in a way to look up data type
-
-                    Ok (Some (term, dt), remaining) 
-                | None -> 
-                    let msg = sprintf "Unable to resolve data type for %s" str
-                    Error msg
             | None -> Ok (None, input)
             
         | ParseError msg ->
@@ -447,12 +595,12 @@ module CalcParser =
         // this will be passed in but hard code while debugging
         
         // put these into a wrapper function so we don't have to keep re-assigning
-        let parseAndHandleField' = parseAndHandleField dataTypeMap
+        let parseAndHandleFieldOrTime' = parseAndHandleFieldOrTime dataTypeMap
         let parseAndHandleConditional' = parseAndHandleConditional dataTypeMap
         let parseAndHandleBrackets' = parseAndHandleBrackets dataTypeMap
         let parseAndHandleFunction' = parseAndHandleFunction dataTypeMap
 
-        let parseAndHandleValue = parseAndHandleField' >=> parseAndHandleAFDateString >=> parseAndHandleNumber >=> parseAndHandleString >=> parseAndHandleBrackets'
+        let parseAndHandleValue = parseAndHandleFieldOrTime' >=> parseAndHandleNumber >=> parseAndHandleString >=> parseAndHandleBrackets'
         let parseAndHandleTerm = parseAndHandleValue >=> parseAndHandleBinaryOperator >=> parseAndHandleFunction' >=> parseAndHandleConditional'
 
         let rec mergeOpVals (operators: list<BinaryOp>, values:list<Value * DataType>, acc:list<BinaryOp>) =
@@ -635,7 +783,7 @@ module CalcParser =
         let result = gatherTerms(expr, [], [], Expecting.Val (Unary opPlus))
         // printfn "%A" result
 
-
+    
         match result with 
         | Ok (typedValues, binaryOps) ->
             // the initial term should be a value
@@ -648,6 +796,34 @@ module CalcParser =
             printfn "%s" msg
             Error msg
 
+    // keep Fields and Time separate?  We have them together for now because they are both wrapped in single quotes
+    and parseAndHandleFieldOrTime(dataTypeMap: Map<string, DataType>) (input: string) =
+        match parseField(input) with 
+        | ParseOK (maybeMatch, remaining) -> 
+            match maybeMatch with 
+            | Some str -> 
+                let maybeDT = Map.tryFind (str.ToUpper()) dataTypeMap
+                match maybeDT with 
+                | Some dt ->
+                    let term = str |> ((Value.Field >> Term.Value))
+                    Ok (Some (term, dt), remaining) 
+                | None -> 
+                    // check if we have a time expression
+                    // this requires that parseExpression can parse date strings
+                    // can we pass in the parser
+                    // WORKING HERE
+                    match parseExpression Map.empty str with 
+                    | Ok (typedTerm) -> 
+                        Ok (Some typedTerm, remaining)
+                    | Error _err ->
+                        let msg = sprintf "Unable to resolve tag or time expression for %s" str
+                        Error msg
+            | None -> Ok (None, input)
+            
+        | ParseError msg ->
+            Error msg
+
+    
     and parseAndHandleBrackets(dtMap: Map<string,DataType>)(input: string) =
         match parseBrackets(input) with 
         | ParseOK (maybeMatch, remaining) -> 
@@ -783,6 +959,31 @@ module CalcParser =
 
         | ParseError msg ->
             Error msg
+
+
+    // this assumes that you can't have a nested time expression, whatever that might look like.
+    // or rather you can have a nested time expression, only that can't contain tags or reference earlier variables 
+    // you might then have '(1 + 2)d' - it would be difficult to see how you could have nested quotes
+    // you might be able to do it via a conditional expression but that would require being able to 
+    // resolve tags from the expression, and why can't we have nested quotes
+    // we would then have the if then end if problem - where is the final qupte
+    // we don't distinguish between beginning and end as we do with brackets
+    // so unless we change the synatax, we can't have nested
+    // this would mean that you could have binary operator follwed by time unit
+    // we would need to parse this differently then as the d would not follow on from a number, but a
+    // binary operator
+
+    // we could possibly be able to use conditionals to return time strings that in turn would be parsed
+    // but that might mean parsing on the fly unless we could store evaluators for the success/fail branches
+    // for the moment assume nothing nested, then allow brackets and conditionals
+    // any inputs for conditionals would have to be supplied by the caller
+    and parseTimeExpression
+        (parser:string -> Result<Option<TypedTerm> * string,string>)
+        (dataTypeMap:Map<string, DataType>) 
+        (expr: string) =
+
+            let parseAndHandleTerm = parseAndHandleFixedDate >=> parseAndHandleNumber >=> parseAndHandleBinaryOperator
+            parseExpression Map.empty expr
 
     let getQueueType(t: Term) = 
         match t with 
@@ -1012,21 +1213,28 @@ module CalcParser =
                 | _, Error err -> ResolvedValue.BadVal err
                 | Error err, _ -> ResolvedValue.BadVal err
 
-
-                        
-                
-            
         | ResolvedValue.String a, ResolvedValue.String b -> 
             ResolvedValue.String (sprintf("%s%s") a b)
 
-        | ResolvedValue.RelativeDate _rd, ResolvedValue.DateOffset (_qty: int, _tu: TimeUnit) ->
+        | ResolvedValue.FixedDate _rd, ResolvedValue.DateOffset (_qty: int, _tu: TimeUnit) ->
             // idea here would be to cast the date to ticks, then resolve the dateoffset to ticks
             // do the arithmetic and cast back to a Relative date with no offset - which should then be an option
             // either that or to store the result as a int64, in which case we need to match on
             // Int64, DateOffset as well - perhaps relative date could be an Int64
             // except that relative date might be "t" and it might be easier to resolve that here
             ResolvedValue.BadVal "Time arithmetic not implemented yet"
-        |  _ ->
+
+        | ResolvedValue.DateOffset (_int1, _tu1), ResolvedValue.DateOffset (_int2, _tu2) ->
+        // idea here would be to cast the date to ticks, then resolve the dateoffset to ticks
+        // do the arithmetic and cast back to a Relative date with no offset - which should then be an option
+        // either that or to store the result as a int64, in which case we need to match on
+        // Int64, DateOffset as well - perhaps relative date could be an Int64
+        // except that relative date might be "t" and it might be easier to resolve that here
+            ResolvedValue.BadVal "Time arithmetic not implemented yet"
+
+        | ResolvedValue.BadVal "Time arithmetic not implemented yet", _
+        
+        |_ ->
             let msg = sprintf "Invalid types for operator plus.  Got (%s, %s)" (rv1.ToString()) (rv2.ToString())
             ResolvedValue.BadVal msg
     
@@ -1273,6 +1481,8 @@ module CalcParser =
 
             | Value.Function (fName, _, _) -> sprintf "Function: %s" fName
             | Value.Conditional c -> sprintf "Conditional: %s" (c.Predicate.ToString())
+            | Value.FixedDate c -> sprintf "FixedDate: %s" (c.ToString())
+            | Value.TimeOffset (a,c) -> sprintf "Time Offset: %s:%s" (a.ToString()) (c.ToString())
         
         // let b: BinaryOp = 9
         let rec serialiseTerm(acc: list<string>, t: Term, parentPrecedence: Precedence) : list<string> = 

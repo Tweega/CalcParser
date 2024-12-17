@@ -52,9 +52,9 @@ let rec doArgs(typedTerms: list<TypedTerm>) =
     hh
 *)
 
-let s = "1 + tagAvg('Sinusoid', " + quote("*-1d") + ", " + quote("*") + ")"
+let s = "1 + tagAvg('Sinusoid', '*-1d' + '*')"
 
-let parseResult = Parser.CalcParser.testParseExpression(expr6)
+let parseResult = Parser.CalcParser.testParseExpression(s)
 printfn "ans: %A" parseResult
 
 // this will eventually take a start and end time, possibly a filter expression
@@ -89,26 +89,26 @@ if 1 = 2 then
     | Error msg ->
         printfn "%s" msg
 
-match parseResult with 
-| Ok (inputs, evaluator) -> 
-    let cdtValues = 
-        ["Cat"; "Dog"] 
-        |> resolveStrings
-    let sinusoidValues = 
-        ["Rabbit"; "Hampster"] 
-        |> resolveStrings
+// match parseResult with 
+// | Ok (inputs, evaluator) -> 
+//     let cdtValues = 
+//         ["Cat"; "Dog"] 
+//         |> resolveStrings
+//     let sinusoidValues = 
+//         ["Rabbit"; "Hampster"] 
+//         |> resolveStrings
 
-    let xx = List.transpose([cdtValues; sinusoidValues])
-    let hh = xx |> List.map evaluator
+//     let xx = List.transpose([cdtValues; sinusoidValues])
+//     let hh = xx |> List.map evaluator
 
 
     // let rvs = resolveFloats([1.1; 2.2])
     // let ans = rvs |> evaluator
 
     // printfn "%A" values
-    printfn "ans: %A" hh
-| Error msg ->
-    printfn "%s" msg
+//     printfn "ans: %A" hh
+// | Error msg ->
+//     printfn "%s" msg
 
 
 
