@@ -125,7 +125,7 @@ module ParserTypes =
     | String of string
     | Boolean of bool
     | BadVal of string
-    | FixedDate of string
+    | FixedDate of string  // a string does not look very resolved - should be DateTime?
     | DateOffset of int * TimeUnit
     // need to add lists tk
 

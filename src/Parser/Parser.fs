@@ -7,9 +7,10 @@ module CalcParser =
     open Microsoft.FSharp.Core.Operators.Checked
     open System
 
-
+    [<RequireQualifiedAccess>]
     type TimeAlias =
     | Yesterday
+    | Now
     | Today
     | Monday
     | Tuesday
@@ -19,7 +20,7 @@ module CalcParser =
     | Saturday
     | Sunday
     with 
-        static member getEquivalentDate (now: DateTime) (timeAlias: TimeAlias) =
+        static member toDate (now: DateTime) (timeAlias: TimeAlias) =
             let currentDay = now.DayOfWeek // Current day as DayOfWeek enum
 
             let daysUntil (targetDay: DayOfWeek) =
@@ -28,6 +29,7 @@ module CalcParser =
                 if offset <= 0 then offset - 7 else offset // Go back 1 week if needed
 
             match timeAlias with
+            | Now -> now
             | Yesterday -> now.Date.AddDays(-1.0) // Midnight yesterday
             | Today -> now.Date                  // Midnight today
             | Monday -> now.Date.AddDays(daysUntil DayOfWeek.Monday |> float)
@@ -37,7 +39,20 @@ module CalcParser =
             | Friday -> now.Date.AddDays(daysUntil DayOfWeek.Friday |> float)
             | Saturday -> now.Date.AddDays(daysUntil DayOfWeek.Saturday |> float)
             | Sunday -> now.Date.AddDays(daysUntil DayOfWeek.Sunday |> float)
-
+        
+        static member getRegExp() = 
+            @"/^\s*(\*" + // Now
+            @"|[Tt]oday|[Tt]" +
+            @"|[Yy]esterday|[Yy]" +
+            @"|[Mm]onday" +
+            @"|[Tt]uesday" +
+            @"|[Ww]ednesday" +
+            @"|[Tt]hursday" +
+            @"|[Ff]riday" +
+            @"|[Ss]aturday" +
+            @"|[Ss]unday)" +
+            @"(?:W|$)/gm"
+            
 
     [<RequireQualifiedAccessAttribute>]
     type TermType =
@@ -186,7 +201,8 @@ module CalcParser =
 
             ParseOK (Some dateStr, remaining)
         else
-            let reTimeAlias = "^\s*([Yy]esterday|[Yy]|[Tt]omorrow|[Tt])\b"
+            let reTimeAlias = TimeAlias.getRegExp()
+                
             let newValueResult, remaining = reApply(reTimeAlias, input)  
             match newValueResult with 
             | Ok maybeNewValue ->
@@ -1166,13 +1182,14 @@ module CalcParser =
         with 
             | err -> ResolvedValue.BadVal err.Message
 
-    
+    // evaluateBinaryOp does the actual calculation for a binary operator, such as plus
     let evaluateBinaryOp (bop:BinaryOperator, rv1: ResolvedValue, rv2:ResolvedValue) =
         match (rv1, rv2) with 
         | ResolvedValue.Numeric a, ResolvedValue.Numeric b -> 
             let precision = determinePrecision a b
             match precision with 
             | Number.Int64 ->
+                // if either argument is int64 and neither is float64, then cast to int64
                 match ((toInt64 a), (toInt64 b)) with 
                 | Ok int64A, Ok int64B  ->
                     match bop with 
@@ -1214,6 +1231,7 @@ module CalcParser =
                 | Error err, _ -> ResolvedValue.BadVal err
 
         | ResolvedValue.String a, ResolvedValue.String b -> 
+            // for the moment all arithetic operators (+-*/) are treated as + for strings
             ResolvedValue.String (sprintf("%s%s") a b)
 
         | ResolvedValue.FixedDate _rd, ResolvedValue.DateOffset (_qty: int, _tu: TimeUnit) ->
@@ -1224,13 +1242,32 @@ module CalcParser =
             // except that relative date might be "t" and it might be easier to resolve that here
             ResolvedValue.BadVal "Time arithmetic not implemented yet"
 
-        | ResolvedValue.DateOffset (_int1, _tu1), ResolvedValue.DateOffset (_int2, _tu2) ->
-        // idea here would be to cast the date to ticks, then resolve the dateoffset to ticks
-        // do the arithmetic and cast back to a Relative date with no offset - which should then be an option
-        // either that or to store the result as a int64, in which case we need to match on
-        // Int64, DateOffset as well - perhaps relative date could be an Int64
-        // except that relative date might be "t" and it might be easier to resolve that here
-            ResolvedValue.BadVal "Time arithmetic not implemented yet"
+        | ResolvedValue.DateOffset (int1, tu1), ResolvedValue.DateOffset (int2, tu2) ->
+            // int1 * tu1 needs to return number of seconds
+            let seconds1 = TimeUnit.getDurationSeconds(tu1)
+            let duration1 = seconds1 * int1
+
+            let seconds2 = TimeUnit.getDurationSeconds(tu2)
+            let duration2 = seconds2 * int2
+
+            match bop with 
+            | BinaryOperator.Operator (op, _) ->
+                match op with    
+                | Plus -> 
+                    let duration = duration1 + duration2
+                    ResolvedValue.DateOffset (duration, TimeUnit.Second)
+                | Minus -> 
+                    let duration = duration1 - duration2
+                    ResolvedValue.DateOffset (duration, TimeUnit.Second)
+                | Multiply -> ResolvedValue.BadVal "Multplication not supported for date offsets"
+                | Divide -> ResolvedValue.BadVal "Division not supported for date offsets"
+                | NoOp -> ResolvedValue.BadVal "NoOp encountered"
+                | Power -> ResolvedValue.BadVal "Exponentials not supported for date offsets"
+                | Modulo -> ResolvedValue.BadVal "Modulo not supported for date offsets"
+            | BinaryOperator.Comparator _ ->
+                ResolvedValue.BadVal "Comparators not supported for date offsets"
+
+            // ResolvedValue.BadVal "Time arithmetic not implemented yet"
 
         | ResolvedValue.BadVal "Time arithmetic not implemented yet", _
         
