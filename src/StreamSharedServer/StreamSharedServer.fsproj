@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="..\XFramework\XFramework.fsproj" />
+    <ProjectReference Include="..\StreamSharedClient\StreamSharedClient.fsproj" />
+    <ProjectReference Include="..\DiscoveryShared\DiscoveryShared.fsproj" />
+    <ProjectReference Include="..\AkkaRouter\AkkaRouter.fsproj" />
+    <ProjectReference Include="..\Utils\Utils.fsproj" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <Compile Include="ServerStreamTypes.fs" />
+    <Compile Include="StreamUtils.fs" />
+    <Compile Include="WriterTypes.fs" />
+  </ItemGroup>
+
+</Project>
+
