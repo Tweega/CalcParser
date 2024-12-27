@@ -126,7 +126,7 @@ module ParserTypes =
     | Boolean of bool
     | BadVal of string
     | FixedDate of System.DateTime  // if these are only part of functions, we may not need them here tk
-    | DateOffset of int * TimeUnit  // ditto
+    | DateOffset of int * TimeUnit  // ditto // would a date offset be a resolved value? perhaps yes it is something that can appear in a binary operation like plus, minus
     // need to add lists tk
 
 
