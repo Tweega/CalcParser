@@ -19,6 +19,8 @@ module CalcParser =
     | Friday
     | Saturday
     | Sunday
+    // could extend this to ThisMonth, LastMonth, MonthAgo, WeekAgo, LastWeek
+    // or we could look at a function that resolved a DateTime - that is probably already possible as a separate expression
     with 
         static member toDate (now: DateTime) (timeAlias: TimeAlias) =
             let currentDay = now.DayOfWeek // Current day as DayOfWeek enum
@@ -1234,16 +1236,14 @@ module CalcParser =
             // for the moment all arithetic operators (+-*/) are treated as + for strings
             ResolvedValue.String (sprintf("%s%s") a b)
 
-        | ResolvedValue.FixedDate _rd, ResolvedValue.DateOffset (_qty: int, _tu: TimeUnit) ->
-            // idea here would be to cast the date to ticks, then resolve the dateoffset to ticks
-            // do the arithmetic and cast back to a Relative date with no offset - which should then be an option
-            // either that or to store the result as a int64, in which case we need to match on
-            // Int64, DateOffset as well - perhaps relative date could be an Int64
-            // except that relative date might be "t" and it might be easier to resolve that here
-            ResolvedValue.BadVal "Time arithmetic not implemented yet"
+        | ResolvedValue.FixedDate dt, ResolvedValue.DateOffset (count: int, tu: TimeUnit) ->
+            let seconds = TimeUnit.getDurationSeconds(tu)
+            let duration = seconds * count
+            let dt2 = dt.AddSeconds duration
+            ResolvedValue.FixedDate dt2
 
         | ResolvedValue.DateOffset (int1, tu1), ResolvedValue.DateOffset (int2, tu2) ->
-            // int1 * tu1 needs to return number of seconds
+            // combines 2 offsets into another offset in seconds (int32)
             let seconds1 = TimeUnit.getDurationSeconds(tu1)
             let duration1 = seconds1 * int1
 

@@ -125,8 +125,8 @@ module ParserTypes =
     | String of string
     | Boolean of bool
     | BadVal of string
-    | FixedDate of string  // a string does not look very resolved - should be DateTime?
-    | DateOffset of int * TimeUnit
+    | FixedDate of System.DateTime  // if these are only part of functions, we may not need them here tk
+    | DateOffset of int * TimeUnit  // ditto
     // need to add lists tk
 
 
@@ -178,6 +178,14 @@ module ParserTypes =
     | Input
     | Output
     | Constant of Constant
+    // | Function  // we are now aiming to evaluate functions at the time controller level not binOp evaluator
+    // so the binary operators do not need to evaluate functions.
+    
+    // if functions are identified in the inputs list, then we could resolve those there and then
+    // before passing in - each function will have its own list of inputs which refrence one of
+        // time
+        // tag
+        // previous expression result.
 
     type FunctionName = string
 
