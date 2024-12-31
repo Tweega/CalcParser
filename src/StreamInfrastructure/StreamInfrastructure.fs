@@ -1260,8 +1260,9 @@ module StreamInfrastructure =
         // controlling stream status (dispatch strategy) only makes sense if consumer has control over the stream
         // in other words the stream is not being fanned out to multiple consumers - in which case there needs to
         // be a buffer per consumer tk
+        let bufferName = sprintf "%s buffer" tag
         let streamBufState =
-            initialiseBufferState("Chabbithog buffer", slicer, dispatchToEmitter, NoDispatch, statusUpdatesToEmitter emitter, generator, NODELAY, unpack, bufferState)
+            initialiseBufferState(bufferName, slicer, dispatchToEmitter, NoDispatch, statusUpdatesToEmitter emitter, generator, NODELAY, unpack, bufferState)
 
         let streamBufBox =
             createBufferBox("Stream API Buffer for Chabbithog", streamBufState)
