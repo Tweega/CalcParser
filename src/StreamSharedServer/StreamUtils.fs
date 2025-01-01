@@ -1,5 +1,5 @@
 namespace Tweega.Shared
-open Tweega.Shared.XFrameworkTypes
+open Tweega.Shared.Types
 open Tweega.Shared.ClientStreamTypes
 
 module StreamUtils =

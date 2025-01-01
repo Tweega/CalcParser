@@ -4,14 +4,17 @@
     <TargetFramework>net8.0</TargetFramework>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
-  
-  <ItemGroup>
-    <ProjectReference Include="..\XFramework\XFramework.fsproj" />
-  </ItemGroup>
 
   <ItemGroup>
+    <!-- <ProjectReference Include="..\Parser\Parser.fsproj" /> -->
+  </ItemGroup>
+  
+
+  <ItemGroup>
+    <Compile Include="Types.fs" />
+    <Compile Include="Cmd.fs" />
+    <!-- <Compile Include="PackItModel.fs" /> -->
     <Compile Include="Utils.fs" />
   </ItemGroup>
-
 
 </Project>

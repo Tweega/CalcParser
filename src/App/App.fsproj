@@ -6,11 +6,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Program.fs" />
+    <ProjectReference Include="..\Parser\Parser.fsproj" />
+    <ProjectReference Include="..\CalcEngine\CalcEngine.fsproj" />
+    <ProjectReference Include="..\AkkaRouter\AkkaRouter.fsproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Parser\Parser.fsproj" />
+    <Compile Include="Program.fs" />
   </ItemGroup>
-
 </Project>

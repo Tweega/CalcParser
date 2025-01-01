@@ -6,11 +6,10 @@
   </PropertyGroup>
   
   <ItemGroup>
-    <ProjectReference Include="..\XFramework\XFramework.fsproj" />
+    <ProjectReference Include="..\Shared\Shared.fsproj" />
     <ProjectReference Include="..\StreamSharedClient\StreamSharedClient.fsproj" />
     <!-- <ProjectReference Include="..\StreamSharedServer\StreamSharedServer.fsproj" /> -->
-    <ProjectReference Include="..\AkkaRouter\AkkaRouter.fsproj" />
-    <ProjectReference Include="..\Utils\Utils.fsproj" />
+    <!-- <ProjectReference Include="..\AkkaRouter\AkkaRouter.fsproj" /> -->
     <!-- <ProjectReference Include="..\MainstreamTShared\MainstreamTShared.fsproj" /> -->
   </ItemGroup>  
 

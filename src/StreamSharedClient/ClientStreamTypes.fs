@@ -4,7 +4,7 @@ namespace Tweega.Shared
 // client stream types are those required in both UI and web end point
 module ClientStreamTypes =
     open System
-    open Tweega.Shared.XFrameworkTypes
+    open Tweega.Shared.Types
 
     type Topic = string
     type TopicSubscription = {ClientRef: ClientRef; Topic: Topic}
@@ -41,6 +41,13 @@ module ClientStreamTypes =
 
 
     type MainstreamTAlias = string
+
+    [<RequireQualifiedAccess>]
+    type PrimitiveType =
+        | Float
+        | Int
+        // | String
+        // etc
     
     [<RequireQualifiedAccess>]
     type StreamType =

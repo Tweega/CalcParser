@@ -3,7 +3,7 @@ namespace Tweega.AkkaRouter
 // Note that Akka has a routing component which this may overlap with - rationalise at some point tk
 module Types =
     open Akka.Actor
-    open Tweega.Shared.XFrameworkTypes
+    open Tweega.Shared.Types
     // generalise this to allow for agents and perhaps other mailbox protocols tk
     // move to somewhere like Tweega.Shared.StreamTypesServer or somewhere all routers can see it
 
@@ -34,11 +34,7 @@ module Types =
             let noOp = fun(_x) -> ()
             this.onResolved(noOp,  noOp)
         
-    type ActorLocation = {
-        AddressResolution: AddressResolution
-        ActorPath: string
-    }
-
+    
     [<RequireQualifiedAccess>]
     type ResolvedActorLocation = {
         ActorRef: IActorRef
@@ -46,4 +42,4 @@ module Types =
     }
 
     type ActorRef = IActorRef
-    type ActorSys =  ActorSystem
+    // type ActorSys =  ActorSystem

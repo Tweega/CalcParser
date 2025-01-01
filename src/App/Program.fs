@@ -5,6 +5,7 @@ open Parser.CalcParser
 open Parser.ParserTypes
 open Parser.JutzParser
 
+Tweega.AkkaRouter.ActorSystemManager.init("CalcEngineSystem")
 // let simple = testParseExpression("1 + 2")
 // let hh = simple([123;321])
 // let nestedBrackets = testParseExpression("(1 + (2 * 3))")

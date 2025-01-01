@@ -4,11 +4,12 @@ namespace Tweega.Shared
 // which uses 4.8.   I think we will need to link into separate versions of the dll
 
 module ServerStreamTypes =
-    open Tweega.Shared.XFrameworkTypes
+    open Tweega.Shared.Types
     open Tweega.Shared.ClientStreamTypes
     open Tweega.Discovery.Shared.Types
     open Tweega.AkkaRouter.Types
-    open Tweega.Utils
+    open Tweega.AkkaRouter.Mailbox
+    open Tweega.Shared.Utils
     
     open System
 
@@ -17,103 +18,15 @@ module ServerStreamTypes =
     | NextPage
     | Teardown
 
-    type FunctionBuildInfo = {
-        QName: QualifiedFunctionName;  // will be same as provider if this is the root definition node
-        QFNs: list<QualifiedFunctionName>;  // functions referred to in this function tree and where to find them if need be. we don't make use of this at the moment tk makeoption?
-        FunctionTree: FunctionTree;  // the function definition
-        OutputType: Tweega.Shared.ClientStreamTypes.StreamType;
-    }
-
-    [<RequireQualifiedAccess>]
-    type ProxyBrokerMsg = 
-        | DeploymentResults of RequestID * option<list<FailureReason>>
-        // | ProxyRegistrationMsg of ProxyRegistrationMsg
-        | RegisterBuilders of list<QualifiedFunctionName * ActorLocation> * option<Subscriber<Result<bool, string>>>  //subscriber is recipe        // | CreateProxyInfrastructure of QualifiedFunctionName * sampleData: 'Data //Result<StreamAPIBuilderGenerator, FailureReason>
-        | RouteStreamAPIMessage of QualifiedTag * StreamAPI //need to incoporate qname tk discovery will use identifier to find mainstream actor and apply yhe passed in function to it. it is assumed that the function will then pass on a typed message to the actor
-        | BuildFunction of FunctionBuildInfo *  Subscriber<QualifiedTag * Result<MessageHandler<StreamAPI>, FailureReason>> //Result<FunctionBuilderInfo, FailureReason>
-        | BuildResult of RequestID * (QualifiedTag * Result<MessageHandler<StreamAPI>, FailureReason>)
-        | SetSelfLocation of ActorLocation
-        | SetProviderLocation of ActorLocation  
-        | SetFunctionBuilderLocation of ActorLocation //  is this the call for successful deployment?
-        | TestMsg of string
-        // | ParseCommand of string //StreamCommand //callback? 
-        // | DeployProviders of alist<QualifiedFunctionName> * Subscriber<option<list<FailureReason>>>
-
-    
-    [<RequireQualifiedAccess>]
-    type ServiceRequestResult =
-    | ProducerResult of ClientRef * Result<list<TagAlias>, FailureReason>   //where remote is data source
-    | ConsumerResult of Result<ActorLocation , string> //where remote is data consumer
-
-
-    [<RequireQualifiedAccess>]
-    type ProxyMsg = // specialist builder API
-        | Initialise of QualifiedFunctionName * string // from proxyManager to proxy.  param2 is path to Interactor ? tk
-        | StreamRequest of BuilderDoc * Subscriber<BuildInfrastructureResult> // BuilderDoc does not look like a recipe doc so perhaps change name tk
-        | ServiceRequestResult of ServiceRequestResult
-        | TestMsg of string
-        | StreamMsg of MessageHandler<StreamAPI>
-
-    type ProxyState = {
-        QualifiedFunctionName: QualifiedFunctionName;
-        IsInitialised: bool;
-        ClientManagerLocation: ActorLocation; //this appears  to double up as ProxyBroker location when proxy does not have a server componment make this an option and add a proxybroker field also? tk
-        StreamRequestMap: Map<string, Subscriber<BuildInfrastructureResult>>;
-        PiperLocation: ActorLocation;
-        Dependencies: list<string * MessageHandler<StreamAPI>>;
-        // PipeAPIMap: Map<ServerRef, MessageHandler<StreamMsg<TimeSeriesValue<System.DateTime>,TimeSeriesValue<System.DateTime>,list<TaggedValues<TimeSeriesValue<float>>>, list<TaggedValues<TimeSeriesValue<float>>>,unit>>>
-        // StreamSet: Set<TagAlias>;  // list of tags that we have subscribed for -- would we want to double check with the server if not found?
-    }
     type NO_STATE = string
-    let NO_BUFFER_STATE:NO_STATE = ""
+    let NO_BUFFER_STATE: NO_STATE = ""
     let NO_STREAM_STATUS_PROPAGATION:SubscriberID * StreamStatus * StreamStatus -> option<SubscriberID * StreamStatus * StreamStatus>= fun(_a,_b,_c) -> None
 
     type TeardownAction = unit -> unit
 
     type BatchID = string
 
-    type StreamSourceMap(m: Map<TagAlias,(System.TypeCode * (unit -> unit) * obj)>) =
-
-        let mutable sourceMap: Map<TagAlias,(System.TypeCode * (unit -> unit) * obj)> = m
-        new() = StreamSourceMap(Map.empty)
-
-        // member this.addSource<'T>(tagName: TagAlias, subscriptionPoint: Subscriber<Subscriber<'T>>) =
-            // does arg2 need to be boxed? subscribeToSource takes generic function arg
-            // if it comes in unboxed, we can store data type info with it to help with error reporting if unboxing fails
-        member __.addSource(tagName: TagAlias, tc: TypeCode, streamStarter: (unit -> unit), subscriptionPointObj: obj) =
-            sourceMap <- sourceMap.Add (tagName, (tc, streamStarter, subscriptionPointObj))
-
-        member __.startSources() =
-            sourceMap |>
-            Map.iter(fun _key (_tc, starter, _subObj) ->
-                starter()
-            )
-            //do we need confirmation that streams have started? tk
-        member __.subscribeToSource(tagAlias: TagAlias, subscriptionInfo: SubscriberID * Subscriber<TaggedValues<TimeSeriesValue<'r>>> * Subscriber<ClientRef * ServerRef * StreamStatus * StreamStatus>) =
-            toConsole( sprintf "subscribeToSource: %s" tagAlias)
-            let tr = typeof<'r>
-            let tcStr = tr.ToString()
-            let maybeObj = Map.tryFind tagAlias sourceMap
-            let res =
-                match maybeObj with
-                | Some (_typeCode, _streamStarter, subscriptionPointObj) ->
-                    // string * TaggedValues<TimeSeriesValue<'p1>> -> unit * SubscriberID * StreamStatus * StreamStatus -> unit
-                    let maybeSubscriber = tryUnbox<Subscriber<SubscriberID * Subscriber<TaggedValues<TimeSeriesValue<'r>>> * Subscriber<ClientRef * ServerRef * StreamStatus * StreamStatus>>> subscriptionPointObj
-                    match maybeSubscriber with
-                    | Some subscriberHandler ->
-                        subscriptionInfo |> subscriberHandler
-                        let msg = sprintf "Successfully subscribed to source of type %s, tag: %s"  tcStr tagAlias
-                        Ok msg
-                    | None ->
-                        let msg = sprintf "Unable to unbox subscriber handler for tag %s, type: %s" tagAlias tcStr
-                        toConsole(msg)
-                        Error msg
-                | None ->
-                    let msg = sprintf "Unable to find source for tag %s, type: %s" tagAlias tcStr
-                    toConsole(msg)
-                    Error msg
-            toConsole( "On the way out from subscribeToSource")
-            res
+    type TagAlias = string  //all stream data is expected to be tagged?
 
     
     type StreamDispose =
@@ -123,21 +36,25 @@ module ServerStreamTypes =
 
     type Initialiser<'state> = unit -> 'state * StreamDispose
 
+
     type DispatchStrategy =
         | Dispatch of DispatchWhen
         | NoDispatch
 
     type Dispatcher<'U> = 'U -> unit
-    type Generator<'T, 'U> = 'T -> 'U
+//    type Generator<'T, 'U> = 'T -> 'U
     type GenDispatch<'T, 'U> = Generator<'T, 'U> -> Dispatcher<'U> -> Dispatcher<'T>
 
     // BufferHandler takes an input and two buffer lists,and returns a list of values to process, plus two updated buffer lists
     // we may also want to add state so that buffer can compress on the fly
 
-    type BufferHandler<'bufInA, 'bufState> = bool -> list<'bufInA> * list<'bufInA> * 'bufState -> list<'bufInA> * list<'bufInA> * 'bufInA list * option<TagAlias * StreamStatus * StreamStatus> * 'bufState
+    //'bufIn will be backlog, bufInA is pending 
+    type BufferHandler<'bufIn, 'bufInA, 'bufState> = bool -> list<'bufInA> * list<'bufIn> * 'bufState -> list<'bufInA> * list<'bufInA> * 'bufIn list * option<TagAlias * StreamStatus * StreamStatus> * 'bufState
 
     type BufferInputHandler<'bufIn, 'bufInA, 'bufOut, 'bufState> = 
-        option<Generator<list<'bufInA>, 'bufOut>> -> option<'bufIn> * 'bufInA list * 'bufInA list * 'bufState -> 'bufInA list * 'bufInA list * 'bufState
+        (option<Generator<list<'bufInA>, 'bufOut>> * Subscriber<'bufOut>) -> option<'bufIn> * list<'bufInA> * list<'bufIn> * 'bufState-> list<'bufInA> * list<'bufIn> * 'bufState 
+    //  option<Generator<list<'bufInA>, 'bufOut>> -> option<'bufIn> * list<'bufInA> * list<'bufIn> * 'bufState-> list<'bufIn> * list<'bufInA> * 'bufState
+    //  option<Generator<list<'bufInA>, 'bufOut>> -> option<'bufIn> * 'bufInA list * 'bufIn list * 'bufState -> 'bufInA list * 'bufIn list * 'bufState
 
     // might a buffer need to dispatch status updates? tk 
     // to client
@@ -145,20 +62,21 @@ module ServerStreamTypes =
     type BufferMsg<'bufIn,'bufInA, 'bufOut, 'bufState> =
         | SetGenerator of Generator<list<'bufInA>, 'bufOut> * DispatchStrategy
         | SetStrategy of DispatchStrategy  // acts as a tap on flow through the buffer
-        | AddToBuffer of list<'bufIn> //check why this has to be a list - might be to do with piper needing to know that inputs are always lists 
-        | AddToBufferBulk of list<'bufInA>
+        | AddToBuffer of 'bufIn
+        | AddToBufferBulk of list<'bufIn>
         | TeardownBuffer
         | UpdateState of ('bufState -> 'bufState)
 
 
     type BufferState<'bufIn, 'bufInA, 'bufOut, 'bufState> = {
         Generator: Generator<list<'bufInA>, 'bufOut>
-        // Dispatcher: Subscriber<'bufInA>  //function that forwards buffer data to connsumer (optionally transforming data on the way)
-        BufferInputHandler:BufferInputHandler<list<'bufIn>, 'bufInA, 'bufOut, 'bufState>
+        // Unpacker: Generator<list<'bufIn>, list<'bufInA>>
+        Dispatcher: Subscriber<'bufOut>  //function that forwards buffer data to connsumer (optionally transforming data on the way)
+        BufferInputHandler:BufferInputHandler<'bufIn, 'bufInA, 'bufOut, 'bufState>
         DispatchStrategy: DispatchStrategy
         //dispatcher: Subscription<'bufIn> //this will send a BufferMsg to either another buffer or a stream
         Pending: list<'bufInA>    //values taken off from here
-        Backlog: list<'bufInA>    //values placed here, taken off and reversed onto pending
+        Backlog: list<'bufIn>    //values placed here, taken off and unpacked into pending
         Delay: bool
         BufferState: 'bufState
         BufName: string
@@ -178,80 +96,6 @@ module ServerStreamTypes =
     }
 
     //stripping out a lot of types here - see commit e2f4bb6 for old listing
-
-    type SocketBufferMsg<'T> = BufferMsg<Tweega.Shared.ClientStreamTypes.TSVDelivery<'T>, list<TSVDelivery<'T>>, WSDelivery<'T>, unit>
-
-    //WSSender is a Subscriber<WSDelivery<'T>> - ie a function that accespts WSDelieveries
-    // what we want instead is a function that accepts an emitter and joins it up with the right sender
-    type FloatConsumerTTSVs = ClientRef -> list<TaggedValues<TimeSeriesValue<float>>> -> unit
-    type EFConsumerTTSVs = ClientRef -> list<TaggedValues<TimeSeriesValue<EventFrameRecord>>> -> unit
-
-    type FloatProducerTSV = Subscriber<list<TaggedValues<TimeSeriesValue<float>>> -> unit>
-    type EFProducerTSV = Subscriber<list<TaggedValues<TimeSeriesValue<EventFrameRecord>>> -> unit>
-
-    [<RequireQualifiedAccess>]
-    type WSJunctionConsumer =
-    | Float of FloatConsumerTTSVs   // |Primitive * ? tk this needs reworking a bit
-    // | EF of EFConsumerTTSVs
-        with
-        member this.DataType() =
-            match this with
-            | Float _f -> FloatT
-            // | EF _f -> StreamType.EF
-
-    // [<RequireQualifiedAccess>]
-    // type WSJunctionProducer =
-    // | Float of ClientRef * obj //FloatProducerTSV
-    // | EF of ClientRef * obj //EFProducerTSV
-    //     with
-    //     member this.DataType() =
-    //         match this with
-    //         | Float (_cRef, _oProducer) -> StreamType.Primitive PrimitiveType.Float
-    //         | EF (_cRef, _oProducer) -> StreamType.EF
-
-    //     member this.Connect(consumerMap: Map<StreamType, WSJunctionConsumer>) =
-    //         // the idea of this function is to connect a consumer with a producer and return a result<bool, string>
-    //         let st = this.DataType()
-    //         let maybeDeliveryConsumer = consumerMap.TryFind(st)
-
-    //         match (this, maybeDeliveryConsumer) with
-    //             | (Float (cRef, oProducer), Some (WSJunctionConsumer.Float floatConsumer)) ->
-    //                 let maybeProducer = tryUnbox<FloatProducerTSV> oProducer
-    //                 match maybeProducer with
-    //                 | Some producer ->
-    //                     let consumer = (cRef |> floatConsumer)
-    //                     consumer |> producer
-    //                     Ok true
-    //                 | None ->
-    //                     let msg = sprintf "Unable to cast producer to FloatProducerTSV in WSJunctionProducer.Connect. cRef:  %s " cRef
-    //                     toConsole(msg)
-    //                     Error msg
-
-
-    //             | (EF (cRef, oProducer), Some (WSJunctionConsumer.EF efConsumer)) ->
-    //                 let maybeProducer = tryUnbox<EFProducerTSV> oProducer
-    //                 match maybeProducer with
-    //                 | Some producer ->
-    //                     let consumer = (cRef |> efConsumer)
-    //                     consumer |> producer
-    //                     Ok true
-    //                 | None ->
-    //                     let msg = sprintf "Unable to cast producer to FloatProducerTSV in WSJunctionProducer.Connect. cRef:  %s " cRef
-    //                     toConsole(msg)
-    //                     Error msg
-
-    //             | (t, Some (x: WSJunctionConsumer)) ->
-    //                 let tConsumer = x.DataType()
-    //                 let tEmitter = t.DataType()
-    //                 let msg = sprintf "Conflicting types in TSVDeliveryProducer.Connect.  %s : %s" (tEmitter.ToString()) (tConsumer.ToString())
-    //                 toConsole(msg)
-    //                 Error msg
-
-    //             | (t, None) ->
-    //                 let tEmitter = t.DataType()
-    //                 let msg = sprintf "No consumer found in TSVDeliveryProducer.Connect for emitter  %s " (tEmitter.ToString())
-    //                 toConsole(msg)
-    //                 Error msg
 
 
     type BufBox<'Msg> = | BufBox of ('Msg -> unit) //buffbox that collects data for this tag
@@ -282,12 +126,12 @@ module ServerStreamTypes =
     [<RequireQualifiedAccess>]
     type StreamMsg<'headBufIn, 'headBufInA, 'headBufOut, 'streamVal, 'streamState,'bufState> = //'bufIn is the type of the head buffer
         | StreamValue of RTV<'streamVal>
-        | StreamSubscribe of SubscriberID * Subscriber<'streamVal> * Subscriber<ClientRef * ServerRef * StreamStatus * StreamStatus>
-        | StreamUnsubscribe of SubscriberID
+        | StreamSubscribe of ClientRef * Subscriber<'streamVal> * Subscriber<ClientRef * ServerRef * StreamStatus * StreamStatus>
+        | StreamUnsubscribe of ClientRef
         | StreamStart of DispatchWhen  // callback for acknowledgement? recipe? tk
         | StreamPause
         | StreamTearDown    // this will have to come with a callback to be used in recipe tk
-        | StreamSourceStatusChange of SubscriberID * StreamStatus * StreamStatus // we probably need to also have the name of the provider
+        | StreamSourceStatusChange of ClientRef * StreamStatus * StreamStatus // we probably need to also have the name of the provider
         | SetInit of Initialiser<'streamState>    //for when an external source like system.timer will provide data for this stream - when the intialiser needs to initialise a data source and connect it up to the mailbox.  Consider controlling access to this service
         | SetBuffer of Subscriber<BufferMsg<'headBufIn, 'headBufInA, 'headBufOut,'bufState>>
         | UpdateState of ('streamState  -> 'streamState)
@@ -320,28 +164,10 @@ module ServerStreamTypes =
     //     | StreamSourceStatusChange of SubscriberID * StreamStatus * StreamStatus
     
 
-    // WriterAPIInternal allows multiple data sources to stream into the same collection point buffer - here a writer
-    // this is not that necessary for a file writer, but perhaps useful for a web socket or aggregator of say multiple pipe flows
-    [<RequireQualifiedAccess>]
-    type WriterAPIInternal<'T> = //More generic than just writers.  Anything that processes a stream input.  internal sounds more private than this is tk
-        | StartWriter
-        | StopWriter
-        | SubscribeWriter of SubscriberID * Subscriber<WriteResult> * Subscriber<ClientRef * ServerRef * StreamStatus * StreamStatus> // is this the same as streamAPI - should they be merged? tk
-        | UnsubscribeWriter of SubscriberID
-        | TeardownWriter
-        | AddDataSource of FunctionName * Subscriber<SubscriberID * Subscriber<list<'T>> * Subscriber<ClientRef * ServerRef * StreamStatus * StreamStatus>>
-        | StreamSourceStatusChange of ClientRef * ServerRef * StreamStatus * StreamStatus // do writers need serverRef? tk
-        // | TruncateFile
-
+    
     type CombinedStreamData<'Data> = list<TaggedValues<TimeSeriesValue<'Data>>>
 
-    // original with CombinedStreamData
-    // type WriterAPIInternalTSV<'Data> = WriterAPIInternal<CombinedStreamData<'Data>>
-    [<RequireQualifiedAccess>]
-    type WriterAPIInternalTSV<'Data> = WriterAPIInternal<TaggedValues<TimeSeriesValue<'Data>>> // this is 'BufIn, not 'BufinA
-    // type TransformAPIInternalTSV<'Data> = TransformAPIInternal<TaggedValues<TimeSeriesValue<'Data>>> // this is 'BufIn, not 'BufinA
-
-
+    
     // StreamSubscribe / Unsubscribe may disappear from this API as subscriptions are done through function trees tk
     // via the mainstreamT
     [<RequireQualifiedAccess>]
@@ -360,7 +186,7 @@ module ServerStreamTypes =
             match streamAPI with 
             | StreamAPI.StreamSubscribe (clientRef, objSubscriber, statusUpdater) ->
                 // this would be a subscription to the WriteResult of the writer
-                let maybeMsg = Tweega.Utils.tryUnbox<Subscriber<list<TaggedValues<'StreamData>>>> (objSubscriber)
+                let maybeMsg = tryUnbox<Subscriber<list<TaggedValues<'StreamData>>>> (objSubscriber)
                 match maybeMsg with 
                 | Some subscriber ->
                     toConsole( "Successful cast ppp")
@@ -413,18 +239,6 @@ module ServerStreamTypes =
     type StreamResult<'Data> = (Result<MessageHandler<TypedStreamAPI<StreamData<'Data>>>, FailureReason>)// was list<FailureReason>
     type StreamResult2<'Data> = (Result<MessageHandler<TypedStreamAPI<TimeSeriesValue<'Data>>>, FailureReason>)
     type StreamResultWithFunctionName<'Data> = (FunctionName * StreamResult<'Data>) // was StreamResult2
-    type StreamResultWithDataStore<'Data> = (DataStore * TagAlias * Result<MessageHandler<TypedStreamAPI<StreamData<'Data>>>, list<FailureReason>>)
-
-    type StreamFails = list<FunctionTree * list<FailureReason>>
-    type StreamDoc<'Data> =  //this is the format for the function that will route the request to the stream supplier - perhaps supplier does not have to work on doc format  the doc can be assembled later.
-        {
-            // input
-            StreamQueries: list<FunctionTree> // by this stage we should know what our data type is
-            // output
-            StreamResults: list<StreamResultWithFunctionName<'Data>>
-        }
-
-    type StreamSpecs<'Data> = Subscriber<list<StreamResultWithFunctionName<'Data>>> * list<FunctionTree>
 
     type AdminCallback = TeardownInfo -> unit
     and Dependencies =
@@ -447,77 +261,12 @@ module ServerStreamTypes =
     // should be in RepoTypes.fs?
     //this should be retured as too inflexible - reeplace with function definition
     [<RequireQualifiedAccess>]
-    type RepoQuery = {
-        DataStore: DataStore
-        Tag: string
-    }
-    with
-        member this.serialise() : list<KVP>  =
-            let ds =
-                match this.DataStore with 
-                | DataStore.PIAF ->"piaf"
-                | DataStore.File -> "file"
-                | DataStore.WS -> "web_socket"
-
-            [{key="data_store"; value=ds}; {key="tag"; value=this.Tag}]
-
-        static member deserialise(kvpList: list<KVP>) : RepoQuery =            
-            let optionsMap = kvpList |> Tweega.Utils.kvpsToMap
-
-            //can't load tweega.utils for some reason to use Exists active pattern
-            let ds = 
-                match Map.tryFind "data_store" optionsMap with 
-                | Some dStr ->
-                    match dStr with 
-                    | "piaf" -> DataStore.PIAF
-                    | "file" -> DataStore.File
-                    | "web_socket"-> DataStore.WS
-                    | _ -> DataStore.File  // don't bother with the discriminated union for data stores tk
-
-                | _ -> DataStore.File
-            let tag = 
-                match Map.tryFind "tag" optionsMap with 
-                | Some t -> t
-                | None -> "TagRepo" //temporary only tk
-            {Tag = tag; DataStore = ds}
     
-
-
-    // type StreamServerAPI<'T> =
-    //     | StreamAPI of TypedStreamAPI<'T>
-    //     | StreamAdminAPI of StreamAdminAPI  //API for internal Pipeline management
-
-    //when registering a stream source, i provide a function that takes
-        // a callback to return a stream doc
-        // a stream doc containing query
-
 
     type StreamRequestID = string
 
-    // references to RepoQuery are replay specific?  if so, move. tk
-    type RepoRequester<'Data> = Subscriber<list<StreamResultWithDataStore<'Data>>> * list<RepoQuery>
-    type StreamRequester<'Data> = Subscriber<list<StreamResultWithFunctionName<'Data>>> * (list<FunctionTree> * option<list<KVP>>)
-    type StreamRequester2<'Data> = Subscriber<list<StreamResultWithFunctionName<'Data>>> * (list<RepoQuery> * option<list<KVP>>)
-    type StreamBuilder<'Data> = Subscriber<StreamRequester<'Data>>
-    //and MainstreamCallback<'Data> = StreamRequestID * list<(TagAlias * Result<MessageHandler<TypedStreamAPI<'Data>>, FailureReason>)>
-    //type MainstreamCallback<'Data> = list<StreamSource * StreamResult<'Data>>
     type MainstreamCallback<'Data> = list<MainstreamTAlias * TagAlias * Result<MessageHandler<TypedStreamAPI<CombinedStreamData<'Data>>>,list<FailureReason>>>
 
-
-    // API for the stream proxy
-    [<RequireQualifiedAccess>]
-    type MainstreamTMsg<'Data> =
-        | Init
-        | RegisterStreamSource of FunctionAlias * StreamBuilder<'Data>    //messages for stream source are handled by this
-        | UnregisterStreamSource of MainstreamTAlias
-        | StreamBuilderResult of StreamRequestID * list<StreamResultWithFunctionName<'Data>>
-        | UnregisterStream of TagAlias
-        | StreamSourceMsg of StreamID * TypedStreamAPI<'Data>   // entry point for messages for stream source
-        | BuildStreams of Subscriber<list<StreamResultWithFunctionName<'Data>>> * (list<FunctionTree> * option<list<KVP>>) //KVPs should be inside the list
-        | StreamSubscriptionCancel of StreamRequestID
-        | TeardownStream of FunctionAlias
-        | TeardownStreams
-    
     type TagList = list<string>
     type ActorPath = string
 
@@ -528,19 +277,11 @@ module ServerStreamTypes =
         | StreamStart of SubscriberID  // the actor name of the pipe
         | StreamPause
 
-
-    // this is an API that only the proxy should have access to
-    // in which case it will not implement RemoteDeploy tk
-    // remote deploy server needs to know what?
-    // might one sever deploy more than one type - say PI deploys ints and float sources - so we here specify which we mean
-    // possibly when we register a source we can supply a callback with the necessary data type already buillt in
-
-
     // this is more like the message that the proxy would get tbd tk
     [<RequireQualifiedAccess>]
     type StreamServerMsg =
         | SubscribeTags of ClientRef * UserCredentials * TagList
-        | StreamAPIMsg of SubscriberRef * StreamAPIServerCmd
+        | StreamAPIMsg of ClientRef * StreamAPIServerCmd
 
 
     [<RequireQualifiedAccess>]
@@ -554,10 +295,10 @@ module ServerStreamTypes =
             | BuildStreamAPIs of Subscriber<list<StreamResultWithFunctionName<'Data>>> * TagList // taglist should be options? tk tbd
 
         [<RequireQualifiedAccess>]
-        type StreamProxyMsgInternalObsolete<'Data> =
+        type StreamProxyMsgInternalObsolete<'Data, 'Msg> =
             | StreamProxyMsg of StreamProxyMsg<'Data>   // flatten BuildStreamAPIs into here
             | HandleConnectionResult of ConnectionResult
-            | PostDeployInit of ActorLocation
+            | PostDeployInit of ActorLocation<'Msg>
 
         // message for client side consumer of stream data - for downstream flows
         [<RequireQualifiedAccess>]
@@ -622,8 +363,8 @@ module ServerStreamTypes =
     }    
 
     type ILocation<'T> =
-        abstract SetLocation : ActorLocation -> 'T
-        abstract GetLocation : unit -> ActorLocation
+        abstract SetLocation : ActorLocation<'T> -> 'T
+        abstract GetLocation : unit -> ActorLocation<'T>
 
     type IAddressResolution<'T> =
         abstract SetAddressResolution : AddressResolution -> 'T
@@ -641,20 +382,20 @@ module ServerStreamTypes =
             PullRequests:int;
         }
 
-    type PullerClient =
+    type PullerClient<'Msg> =
         {
             StreamStatusMap: Map<string, StreamStatus>
             CleanupPipe: unit -> unit // once all data downloaded the pipe mechanism can be cleaned up
             PullRequests:int;
-            SourceLocation:ActorLocation;  //location of server pipe
+            SourceLocation:ActorLocation<'Msg>;  //location of server pipe
             LiveStreamCount: int;
-            RequestData: Generator<ActorLocation * RequestData, Result<option<ActorLocation>,FailureReason>>; //extnd this so that client can request page for particular tag
-            MaybeBufferLocation: option<ActorLocation>; //location of this RepoPipeClientState instance is this actually needed tk?
+            RequestData: Generator<ActorLocation<'Msg> * RequestData, Result<option<ActorLocation<'Msg>>,FailureReason>>; //extnd this so that client can request page for particular tag
+            MaybeBufferLocation: option<ActorLocation<'Msg>>; //location of this RepoPipeClientState instance is this actually needed tk?
         }
     
     
-    type IPullerClient = 
-      abstract GetPullerClient : unit -> PullerClient
+    type IPullerClient<'Msg> = 
+      abstract GetPullerClient : unit -> PullerClient<'Msg>
 
     
     type IPuller =

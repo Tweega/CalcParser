@@ -6,8 +6,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Shared\Shared.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Include="ParserTypes.fs" />
-    <Compile Include="Utils.fs" />
     <Compile Include="Parser.fs" />
     <!-- <Compile Include="scratch.fsx" /> -->
     <Compile Include="AF.fsx" />

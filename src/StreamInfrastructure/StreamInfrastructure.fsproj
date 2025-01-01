@@ -6,10 +6,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\XFramework\XFramework.fsproj" />
+    <ProjectReference Include="..\Shared\Shared.fsproj" />
     <ProjectReference Include="..\StreamSharedServer\StreamSharedServer.fsproj" />
     <!-- <ProjectReference Include="..\DiscoveryShared\DiscoveryShared.fsproj" /> -->
-    <ProjectReference Include="..\Utils\Utils.fsproj" />
   </ItemGroup>
 
   <ItemGroup>

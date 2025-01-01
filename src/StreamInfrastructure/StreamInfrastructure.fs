@@ -1,65 +1,51 @@
 namespace Tweega
 module StreamInfrastructure =
     open System
-    open Tweega.Shared.XFrameworkTypes
+    open Tweega.Shared
+    open Tweega.Shared.Types
     open Tweega.Shared.ClientStreamTypes
     open Tweega.Shared.ServerStreamTypes
     open Tweega.Discovery.Shared.Types
-    open Tweega.Utils
+    open Tweega.Shared.Utils
     open Akka.FSharp
     open Akka.Actor
-
-    type SinusoidConfig = {
-        Name: string
-        CyclesPerDay: int
-        Amplitude: int
-        //Phase: int
-    }
 
     type TimerConfig = {
         Name: string
         TickMilliseconds: int
     }
 
-    type RandomConfig = {
-        Name: string
-        MinVal: float
-        MaxVal: float
-        MaxPercentChange: int
-        InitialValue: int
-    }
-
-   
     let makeUnpacker(unpack:'bufIn -> 'bufInA) =
         fun(bufIn, bufInAs, buffState) ->
             let bufInA = unpack(bufIn)
             (bufInA :: bufInAs, buffState)
 
-    let unpackTaggedValues =  
-        fun({Tag=_tag; Values = values}) ->
-            values 
-
-
-    let ignoreStatusUpdates:Subscriber<TagAlias * StreamStatus * StreamStatus> = 
-        fun (tag, _, newStatus) -> 
-        toConsole( sprintf "Ignoring status update for %s : %A " tag newStatus)
-
-    let ignoreStatusUpdatesTemporarily = ignoreStatusUpdates
-
+    
     //how will this  work in the event of the emitter falling over?
     let statusUpdatesToEmitter(emitter) =
         fun ((tag, prevStatus, newStatus) as msg) ->
             toConsole( "coco 1")
             (tag, prevStatus, newStatus) |> (StreamMsg.StreamSourceStatusChange >> emitter)
 
-    let vanillaSlicer<'Data, 'bufState> : BufferHandler<'Data, 'bufState> = 
-        fun(bSend: bool)(pending:list<'Data>, backlog: list<'Data>, state: 'bufState) ->
-        //dispatches whole of backlog if tap open otherwise keeps in backlog  ignores pending
+
+    (*
+     type BufferHandler<'bufIn, 'bufInA, 'bufState> = 
+     bool -> 
+     list<'bufInA> * list<'bufIn> * 'bufState -> 
+     list<'bufInA> * list<'bufInA> * 'bufIn list * option<TagAlias * StreamStatus * StreamStatus> * 'bufState
+
+    *)
+
+    let vanillaSlicer<'bufIn, 'bufInA, 'bufOut, 'bufState>(unpacker: list<'bufIn> -> list<'bufInA>) : BufferHandler<'bufIn, 'bufInA, 'bufState> = 
+        fun(bSend: bool)(pending:list<'bufInA>, backlog: list<'bufIn>, state: 'bufState) ->
+        // dispatches whole of backlog if tap open otherwise keeps in backlog  
+        // ignores pending
         // data emitted so that oldest is at the head
         // vanilla slicer ignores stream state updates (None)
         match bSend with
         | true ->
-            let dispatch = backlog |> List.rev
+            let dispatch = 
+                backlog |> (List.rev >> unpacker)
             dispatch, [], [], None, state
 
         | false -> 
@@ -67,7 +53,7 @@ module StreamInfrastructure =
 
     let calcSlicerPredicate (backlog:list<'Data>, state:BufferWithInputsState) : bool * option<StreamStatus * StreamStatus>=
         //this is an instance of the function referred to to predicate in CalcSlicer
-        //this is the slicer for a single input stream toa function
+        //this is the slicer for a single input stream to a function
         
         // toConsole( "In calcSlicerPredicate ddd")
         let isc = state :> IStreamConsumer<BufferWithInputsState>
@@ -105,7 +91,7 @@ module StreamInfrastructure =
                     | StreamStatus.Terminated ts -> ts
                     
                 let bDispatch, streamStatus =
-                    match 0  with 
+                    match 0  with // WHAT is going on here? tk
                     | Eq 0 -> 
                         // toConsole( "Is live stream count ever 0 huh?")
                         match backlog.Length > 1 with   //if 1 then this will be removed and dispatched
@@ -117,7 +103,7 @@ module StreamInfrastructure =
                             // we don't get called if the backlog + pending count is 0, so cleanup needs to stem from this terminated state
                             // we never get here and we need to 
                             toConsole( sprintf "never get here? calcSlicerPredicate Stream status changing to TERMINATED: liveStreamCount: %d" liveStreamCount)
-                            (true, StreamStatus.Terminated now) //true because we want to dispatch the last data item
+                            (true, StreamStatus.Terminated now) //true because we want to dispatch the last data token
 
                     | _ -> 
                         // toConsole( "calcSlicerPredicate Sttream status ACTIVE for repo combiner")
@@ -189,47 +175,36 @@ module StreamInfrastructure =
 
 
 
-    let vanillaCalcSlicer:BufferHandler<'Data, 'bufState> = 
-        fun(bDispatch: bool)(pending:list<'Data>, backlog: list<'Data>, bufState: 'bufState) ->
-            //ignoring possibility of stream state changes (we are not expecting TsvsStatus data)
-            // unpacker puts everything onto backlog so that newest is at head
-            // if pending is empty we reverse backlog and put into pending so that oldest is served first
-
-            // calculator like any other stream needs to know when it is finished
-            // particularly if feeding a writer
-
+    let vanillaSingletonSlicer<'bufIn, 'bufInA, 'bufState>
+        (unpack: list<'bufIn> -> list<'bufInA>)
+        : BufferHandler<'bufIn, 'bufInA, 'bufState> = 
+        // this slicer returns pending one item at a time
+        fun
+            (bDispatch: bool)
+            (pending:list<'bufInA>, backlog: list<'bufIn>, bufState: 'bufState) ->
+            
             match bDispatch with
             | true ->
-                match pending with
-                | [] ->
-                    match List.rev backlog  with
+                match pending:list<'bufInA> with
+                | [] ->                        
+                    match (List.rev backlog |> unpack)  with
                     | [] -> 
                         toConsole( "Warning? No data in either pending or backlog. Is that OK?")
                         [], [], [], None, bufState
                     | h :: t ->
-                        [h], t, [], None, bufState  //dispatching data one item at a time
+                        [h], t, [], None, bufState  //dispatching data one token at a time
 
                 | h :: t ->
                     [h], t, backlog, None, bufState
 
             | false ->
-                match pending with
-                | [] ->
-                    match List.rev backlog  with
-                    | [] -> 
-                        toConsole( "Warning? No data in either pending or backlog. Is that OK?")
-                        [], [], [], None, bufState
-                    | pending' ->
-                        [], pending', [], None, bufState  //dispatching data one item at a time
+                [], pending, backlog, None, bufState
 
-                | pending' ->
-                    [], pending', backlog, None, bufState
-
+    
     let NODELAY = false
     let DELAY = true
 
-    let inline delayed f a = fun () -> f(a)
-
+    
     let timerGen(_timerCfg) =
         //you can subscribe to a timer but the timer is not a subscriber
         //create a timer that ultimately emits
@@ -248,12 +223,12 @@ module StreamInfrastructure =
         //create the timer? return state and a way to dispose of timer resources
         let subscriptionCallback = ignore   //how to get access to this.  place in state?
         let routeTimerArgToMailbox =
-            //this function won't ever be updated
-            //SHould it not be passed in?  Continuations for buffers will be passed in but come back to this one tk
-            //for streams that do not have to evaluate anything, such as timer, have another class of mailbox tk
+            // this function won't ever be updated
+            // Should it not be passed in?  Continuations for buffers will be passed in but come back to this one tk
+            // for streams that do not have to evaluate anything, such as timer, have another class of mailbox tk
             fun(t: Timers.ElapsedEventArgs) ->
                 let bufferMsg: BufferMsg<Timers.ElapsedEventArgs,Timers.ElapsedEventArgs, TimeSeriesValue<Timestamp>, NO_STATE> =
-                    BufferMsg.AddToBuffer [t]
+                    BufferMsg.AddToBuffer t
                 bufBox bufferMsg
 
         fun() ->
@@ -272,13 +247,6 @@ module StreamInfrastructure =
                 toConsole( "Timer stopped")
 
             ((), StreamDispose disposer) //unit here indicates that a timer emitter keeps no state (other than disposer)
-
-
-
-    let randomFloatInit(cfg: RandomConfig) =
-        fun() ->
-            ((cfg.MinVal + cfg.MaxVal) / 2.0, NotDisposable)
-
 
 
     let inline staticValueGen(_cfg) =
@@ -445,7 +413,9 @@ module StreamInfrastructure =
                 toConsole(sprintf  "(SweetCaroline, ba ba ba) Source Status change received by %s" state.StreamName)
         streamState
 
-    let makeEmitterMailbox<'msg, 'headBufIn, 'headBufInA, 'headBufOut, 'streamVal, 'streamState, 'bufState>(msgHandler: 'msg -> StreamState<'headBufIn, 'headBufInA, 'headBufOut, 'streamVal, 'streamState, 'bufState> -> StreamState<'headBufIn, 'headBufInA, 'headBufOut, 'streamVal, 'streamState, 'bufState>, streamState:StreamState<'headBufIn, 'headBufInA, 'headBufOut, 'streamVal, 'streamState, 'bufState>) =
+    let makeEmitterMailbox<'msg, 'headBufIn, 'headBufInA, 'headBufOut, 'streamVal, 'streamState, 'bufState>
+        (msgHandler: 'msg -> StreamState<'headBufIn, 'headBufInA, 'headBufOut, 'streamVal, 'streamState, 'bufState> -> StreamState<'headBufIn, 'headBufInA, 'headBufOut, 'streamVal, 'streamState, 'bufState>, 
+        streamState:StreamState<'headBufIn, 'headBufInA, 'headBufOut, 'streamVal, 'streamState, 'bufState>) =
         //the generator function will already be embedded into StreamState
         let genMailbox = MailboxProcessor<'msg>.Start(fun agent ->
             // Function that implements the body of the agent
@@ -491,30 +461,33 @@ module StreamInfrastructure =
     //         (newPending, newBacklog, newState)
 
     let makeHandler<'bufIn, 'bufInA, 'bufOut, 'bufState>
-        (handlerFor: string) //this should be the tag name tk this does not appear to be used
-        (dispatcher: Subscriber<'bufOut>) 
+        (_handlerFor: string) //this should be the tag name tk this does not appear to be used
+        // (dispatcher: Subscriber<'bufOut>) 
         (downstreamStatusUpdater: Subscriber<TagAlias * StreamStatus * StreamStatus>) 
-        (inputHandler: BufferHandler<'bufInA, 'bufState>) 
-        (unpack: Generator<'bufIn * list<'bufInA> * 'bufState, list<'bufInA> * 'bufState>) 
-        (_bufferState: 'bufState) = //do we need this line? tk it potentially locks 'bufState without explicit typing
-         fun (maybeGenerator: option<Generator<list<'bufInA>, 'bufOut>>) (maybeBufIns:option<list<'bufIn>>, pending: list<'bufInA>, backlog:list<'bufInA>, bufState: 'bufState) ->
+        (inputHandler: BufferHandler<'bufIn, 'bufInA, 'bufState>) 
+        // (unpack: Generator<'bufIn * list<'bufInA> * 'bufState, list<'bufInA> * 'bufState>) 
+        (_bufferState: 'bufState) 
+        : (option<Generator<list<'bufInA>, 'bufOut>> * Subscriber<'bufOut>) -> option<'bufIn> * list<'bufInA> * list<'bufIn> * 'bufState-> list<'bufInA> * list<'bufIn> * 'bufState 
+        =
+        fun (maybeGenerator: option<Generator<list<'bufInA>, 'bufOut>>, dispatcher:Subscriber<'bufOut>) (
+                maybeBufIn:option<'bufIn>, 
+                pending: list<'bufInA>, 
+                backlog:list<'bufIn>, 
+                bufState: 'bufState
+            ) ->
+            
             let bProcess = Option.isSome maybeGenerator
             // if we have data it will be a list<'bufIn> Unpack each one produce new backlog:list<bufInA>
-            let backlog', state' = 
-                (maybeBufIns |> (Option.map ( fun bufIns->
-                    bufIns |>
-                    List.fold(fun ((bufInAsAcc:list<'bufInA>),  (buffStateAcc: 'bufState)) bufIn ->
-                        unpack (bufIn, bufInAsAcc, buffStateAcc)
-                    ) (backlog, bufState)
-                ) ))
-                |> (Option.defaultValue (backlog, bufState))
+            let backlog' = 
+                match maybeBufIn with
+                | Some  bufin ->
+                    bufin :: backlog
+                | None -> backlog
 
             // toConsole( sprintf "bProcess in %s is :%b, %d" handlerFor bProcess backlog'.Length)
 
             let (forDispatch, newPending, newBacklog, maybeStatusChange, newState) =
-                inputHandler bProcess (pending, backlog', state') 
-
-            //i think we had a version that propagated state changes downstream here WORKING HERE
+                inputHandler bProcess (pending, backlog', bufState) 
 
             if not(forDispatch.IsEmpty) then
                 maybeGenerator |> 
@@ -533,7 +506,6 @@ module StreamInfrastructure =
                 statusUpdate |> downstreamStatusUpdater
             | None -> ()
 
-            
             (newPending, newBacklog, newState)
 
     
@@ -726,27 +698,29 @@ module StreamInfrastructure =
     let initialiseBufferState<'bufIn, 'bufInA, 'bufOut, 'bufState>(
         // slicer: list<'bufInA> * list<'bufInA> * 'bufState * bool -> list<'bufInA> * list<'bufInA> * list<'bufInA> * 'bufState,
         bufName: string,
-        buffHandler:BufferHandler<'bufInA, 'bufState>,
+        buffHandler:BufferHandler<'bufIn, 'bufInA, 'bufState>,
         dispatcher: Subscriber<'bufOut>, 
         dispatchStrategy: DispatchStrategy,  
         downStreamStatusUpdater:Subscriber<TagAlias * StreamStatus * StreamStatus>,
         generator: Generator<list<'bufInA>,'bufOut>, 
         delay: bool,  
-        (unpack: Generator<'bufIn * list<'bufInA> * 'bufState, list<'bufInA> * 'bufState>),
-        bufState: 'bufState)    
-        : BufferState<'bufIn,'bufInA,'bufOut,'bufState> =
+        //(unpack: Generator<'bufIn * list<'bufInA> * 'bufState, list<'bufInA> * 'bufState>),
+        bufState: 'bufState)  =  
+        // : BufferState<'bufIn,'bufInA,'bufOut,'bufState> =
         // we are stipulating that data always goes to the backlog - is that reasonable?
         
         let pending = list<'bufInA>.Empty
-        let backlog = list<'bufInA>.Empty
+        let backlog = list<'bufIn>.Empty
 
         //let hbi: BufferHandler<'bufIn> = handleBufferInput
-        let bih = makeHandler bufName dispatcher downStreamStatusUpdater buffHandler unpack bufState
 
-
+        let bih:(option<Generator<list<'bufInA>, 'bufOut>> * Subscriber<'bufOut>) -> option<'bufIn> * list<'bufInA> * list<'bufIn> * 'bufState-> list<'bufInA> * list<'bufIn> * 'bufState = 
+            makeHandler bufName downStreamStatusUpdater buffHandler bufState
+        
         {
-            Generator = generator
-            // Dispatcher = dispatcher // check where this is used and whether we need it now tk
+            Generator = generator;
+            // Unpacker = unpacker
+            Dispatcher = dispatcher
             DispatchStrategy = dispatchStrategy
             BufferInputHandler = bih
             Pending = pending
@@ -756,149 +730,130 @@ module StreamInfrastructure =
             BufName= bufName
         }
 
+    //----------
+    
+    let handleBufferMessage
+        (msg: BufferMsg<'bufIn, 'bufInA, 'bufOut, 'bufState>) 
+        (bufferState: BufferState<'bufIn, 'bufInA, 'bufOut, 'bufState>) =
+        //update to return a result at some point
+        match msg with
+            BufferMsg.UpdateState updater ->
+                let bufferState' = updater(bufferState.BufferState)
+                {bufferState with BufferState = bufferState';}
 
-    //++-----------------------------------------------------
+            | BufferMsg.SetGenerator (generator, dispatchStrategy) ->
+                toConsole(sprintf "Set generator called on buffer %s" bufferState.BufName)
+                match dispatchStrategy with
+                    | Dispatch dispatchWhen ->
+                        match bufferState.Pending.Length + bufferState.Backlog.Length > 0 with
+                        | true ->
+                            let (newPending, newBacklog, newState) = //what is happening with newState tk tbd?
+                                bufferState.BufferInputHandler (Some generator, bufferState.Dispatcher) (None, bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
+
+                            match dispatchWhen with
+                            | AlwaysDispatch ->
+                                {bufferState with Generator = generator; DispatchStrategy = Dispatch AlwaysDispatch; Pending = newPending; Backlog = newBacklog; BufferState = newState;}
+
+                            | SingleDispatch ->
+                                {bufferState with Generator = generator; DispatchStrategy = NoDispatch; Pending = newPending; Backlog = newBacklog; BufferState = newState;}
+                        | false ->
+                            {bufferState with Generator = generator; DispatchStrategy = dispatchStrategy}
+
+                    | NoDispatch->
+                        {bufferState with Generator = generator; DispatchStrategy = dispatchStrategy}
+
+            | BufferMsg.AddToBuffer value ->
+                let maybeNewStrategy, maybeGen =
+                    match bufferState.DispatchStrategy with
+                    | NoDispatch -> 
+                        // toConsole( sprintf "Strategy is no dispatch on buffer %s" bufferState.BufName )
+                        None, None
+                    | Dispatch dispatchWhen ->
+                        // toConsole( sprintf "Strategy is DISPATCH on buffer %s" bufferState.BufName )
+                        match dispatchWhen with
+                        | AlwaysDispatch -> None, Some bufferState.Generator
+                        | SingleDispatch -> Some NoDispatch, Some bufferState.Generator
+
+                let(newPending, newBacklog, newState) = bufferState.BufferInputHandler (maybeGen, bufferState.Dispatcher) (Some value, bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
+                toConsole(sprintf  "For buffer %s After buffer handler: %d, %d" bufferState.BufName newPending.Length newBacklog.Length)
+                // toConsole(sprintf  "Maybe Strategy: %A : mmaybeGen: %A" maybeNewStrategy maybeGen)
+
+                match maybeNewStrategy with
+                    | Some strategy -> {bufferState with DispatchStrategy = strategy; Pending = newPending; Backlog = newBacklog}
+                    | None -> {bufferState with Pending = newPending; Backlog = newBacklog; BufferState = newState}
+
+
+            | BufferMsg.AddToBufferBulk (bufIns) ->
+                let maybeNewStrategy, maybeGen =
+                    match bufferState.DispatchStrategy with
+                    | NoDispatch -> None, None
+                    | Dispatch dispatchWhen ->
+                        match dispatchWhen with
+                        | AlwaysDispatch -> None, Some bufferState.Generator
+                        | SingleDispatch -> Some NoDispatch, Some bufferState.Generator
+
+                let bLog =
+                    bufIns |>
+                    List.foldBack(fun v acc ->
+                        v :: acc
+                    ) bufferState.Backlog
+
+                let(newPending, newBacklog, newState) = bufferState.BufferInputHandler (maybeGen, bufferState.Dispatcher) (None, bufferState.Pending, bLog, bufferState.BufferState)
+
+                match maybeNewStrategy with
+                    | Some strategy -> {bufferState with DispatchStrategy = strategy; Pending = newPending; Backlog = newBacklog; BufferState = newState}
+                    | None -> {bufferState with Pending = newPending; Backlog = newBacklog; BufferState = newState}
+
+
+            | BufferMsg.SetStrategy dispatchStrategy ->
+                let bufferHasData = bufferState.Pending.Length + bufferState.Backlog.Length > 0
+                // toConsole( sprintf "Setting strategy on buffer %s" bufferState.BufName)
+                let newStrategy, newPending, newBacklog, newState =
+                    match dispatchStrategy with
+                    | NoDispatch -> (NoDispatch, bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
+                    | Dispatch dispatchWhen ->
+                        let nextStrategy =
+                            match dispatchWhen with
+                            | AlwaysDispatch -> dispatchStrategy
+                            | SingleDispatch ->
+                                // toConsole(sprintf  "Setting single dispatch for %s: %d:%d" bufName bufferState.Pending.Length  bufferState.Backlog.Length)
+                                // if there is no data in the buffer then strategy remains single dispatch, otherwise NoDispatch
+                                if bufferHasData then
+                                    // toConsole( "With data so just this time")
+                                    NoDispatch
+                                else
+                                    (Dispatch SingleDispatch)
+                        // need to save newState tk
+                        let(newPending', newBacklog', newState') =
+                            match bufferHasData with
+                            | true ->
+                                bufferState.BufferInputHandler (Some bufferState.Generator, bufferState.Dispatcher) (None, bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
+                            | false ->
+                                (bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
+
+                        (nextStrategy, newPending', newBacklog', newState')
+
+                {bufferState with DispatchStrategy = newStrategy; Pending = newPending; Backlog = newBacklog; BufferState = newState}
+
+            | BufferMsg.TeardownBuffer ->
+                {bufferState with DispatchStrategy = NoDispatch; Pending = list.Empty; Backlog = list.Empty;}
+
+
+
     // functionally the same as createBufferBox but uses an AkkaActor
-    // I would like to move this out into AkkaRouter and lose references to Akka packages, 
-    // but StreamInfrastructure has a reference to that and has BufferMessage type declarations
     let createBufferBox2<'bufIn, 'bufInA, 'bufOut, 'bufState>
         (actorSystem: ActorSystem,
-        bufName: string, 
+        _bufName: string, 
         initialBufferState: BufferState<'bufIn, 'bufInA, 'bufOut, 'bufState>) =
 
         let whereAreWe = "streamInfrastructure createBufferBox"
 
-        let bufferInputHandler
-            (_mailbox: Actor<BufferMsg<'bufIn, 'bufInA, 'bufOut, 'bufState>>) 
-            (msg: BufferMsg<'bufIn, 'bufInA, 'bufOut, 'bufState>) 
-            (bufferState: BufferState<'bufIn, 'bufInA, 'bufOut, 'bufState>) =
-            //update to return a result at some point
-            match msg with
-                BufferMsg.UpdateState updater ->
-                    let bufferState' = updater(bufferState.BufferState)
-                    {bufferState with BufferState = bufferState';}
-
-                | BufferMsg.SetGenerator (generator, dispatchStrategy) ->
-                    toConsole(sprintf "Set generator called on buffer %s" bufferState.BufName)
-                    match dispatchStrategy with
-                        | Dispatch dispatchWhen ->
-                            match bufferState.Pending.Length + bufferState.Backlog.Length > 0 with
-                            | true ->
-                                let (newPending, newBacklog, newState) = //what is happening with newState tk tbd?
-                                    bufferState.BufferInputHandler (Some generator) (None, bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
-
-                                match dispatchWhen with
-                                | AlwaysDispatch ->
-                                    {bufferState with Generator = generator; DispatchStrategy = Dispatch AlwaysDispatch; Pending = newPending; Backlog = newBacklog; BufferState = newState;}
-
-                                | SingleDispatch ->
-                                    {bufferState with Generator = generator; DispatchStrategy = NoDispatch; Pending = newPending; Backlog = newBacklog; BufferState = newState;}
-                            | false ->
-                                {bufferState with Generator = generator; DispatchStrategy = dispatchStrategy}
-
-                        | NoDispatch->
-                            {bufferState with Generator = generator; DispatchStrategy = dispatchStrategy}
-
-                | BufferMsg.AddToBuffer values ->
-                    let maybeNewStrategy, maybeGen =
-                        match bufferState.DispatchStrategy with
-                        | NoDispatch -> 
-                            // toConsole( sprintf "Strategy is no dispatch on buffer %s" bufferState.BufName )
-                            None, None
-                        | Dispatch dispatchWhen ->
-                            // toConsole( sprintf "Strategy is DISPATCH on buffer %s" bufferState.BufName )
-                            match dispatchWhen with
-                            | AlwaysDispatch -> None, Some bufferState.Generator
-                            | SingleDispatch -> Some NoDispatch, Some bufferState.Generator
-
-                    let(newPending, newBacklog, newState) = bufferState.BufferInputHandler maybeGen (Some values, bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
-                    // toConsole(sprintf  "For buffer %s After buffer handler : koyaniskatsu: %d, %d" bufName newPending.Length newBacklog.Length)
-                    // toConsole(sprintf  "Maybe Strategy: %A : mmaybeGen: %A" maybeNewStrategy maybeGen)
-
-                    match maybeNewStrategy with
-                        | Some strategy -> {bufferState with DispatchStrategy = strategy; Pending = newPending; Backlog = newBacklog}
-                        | None -> {bufferState with Pending = newPending; Backlog = newBacklog; BufferState = newState}
-
-
-                | BufferMsg.AddToBufferBulk vList ->
-                    let maybeNewStrategy, maybeGen =
-                        match bufferState.DispatchStrategy with
-                        | NoDispatch -> None, None
-                        | Dispatch dispatchWhen ->
-                            match dispatchWhen with
-                            | AlwaysDispatch -> None, Some bufferState.Generator
-                            | SingleDispatch -> Some NoDispatch, Some bufferState.Generator
-
-                    let bLog =
-                        vList |>
-                        List.fold(fun acc v ->
-                            v :: acc
-                        ) bufferState.Backlog
-
-                    let(newPending, newBacklog, newState) = bufferState.BufferInputHandler maybeGen (None, bufferState.Pending, bLog, bufferState.BufferState)
-
-                    match maybeNewStrategy with
-                        | Some strategy -> {bufferState with DispatchStrategy = strategy; Pending = newPending; Backlog = newBacklog; BufferState = newState}
-                        | None -> {bufferState with Pending = newPending; Backlog = newBacklog; BufferState = newState}
-
-
-                | BufferMsg.SetStrategy dispatchStrategy ->
-                    let bufferHasData = bufferState.Pending.Length + bufferState.Backlog.Length > 0
-                    // toConsole( sprintf "Setting strategy on buffer %s" bufferState.BufName)
-                    let newStrategy, newPending, newBacklog, newState =
-                        match dispatchStrategy with
-                        | NoDispatch -> (NoDispatch, bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
-                        | Dispatch dispatchWhen ->
-                            let nextStrategy =
-                                match dispatchWhen with
-                                | AlwaysDispatch -> dispatchStrategy
-                                | SingleDispatch ->
-                                    // toConsole(sprintf  "Setting single dispatch for %s: %d:%d" bufName bufferState.Pending.Length  bufferState.Backlog.Length)
-                                    // if there is no data in the buffer then strategy remains single dispatch, otherwise NoDispatch
-                                    if bufferHasData then
-                                        // toConsole( "With data so just this time")
-                                        NoDispatch
-                                    else
-                                        (Dispatch SingleDispatch)
-                            // need to save newState tk
-                            let(newPending', newBacklog', newState') =
-                                match bufferHasData with
-                                | true ->
-                                    bufferState.BufferInputHandler (Some bufferState.Generator) (None, bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
-                                | false ->
-                                    (bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
-
-                            (nextStrategy, newPending', newBacklog', newState')
-
-                    {bufferState with DispatchStrategy = newStrategy; Pending = newPending; Backlog = newBacklog; BufferState = newState}
-
-                | BufferMsg.TeardownBuffer ->
-                    // is the teardown of a buffer a generic operation or specific to each one,
-                    // in which case how will we manage that?
-                    // if we are shutting down - we need to unsubscribe from any stream provider we might have
-                    // how to do that?  our provider is anyone that is sending us AddToBuffer messages
-                    // and also anyone sending SetStrategy messages, which is getting complicated.
-                    // so we need a list of those and a way to unsubscribe
-                    // hopefully we can postpone some or most of this for now.  The main aim at the moment
-                    // is to close the file writer.
-                    // it looks as if buffer teardonw will be specific to each case as some will have set strategy others add to buffer
-                    // unless those operations came through a function that added the event sources to a list of providers.
-                    // examples
-                        // data coming into combiner buffer
-                        // all buffers will have data sources (AddToBuffer) so we need a complementary function to unsubscribe
-                        // the only way to do this will be to pass an id when subscribing
-                        // combiner has multiple source that AddToBuffer - so we need to flag wherever we set that.
-
-                        // the other message type was set strategy
-                        // this might refer to the same source as add to buffer
-                        // where set strategy is called from within dispatcher it can be ignored as
-                        // the dispatcher is the same as the generator which depends on AddToBuffer messages
-
-                        // so we need to update the subscription process so that we can unsubscribe
-                    // let noOp = fun(_x) -> () // will generator ever have resources to clear?
-
-                    {bufferState with DispatchStrategy = NoDispatch; Pending = list.Empty; Backlog = list.Empty;}
-
+        let handler = 
+            fun
+                (_mailbox)
+                (msg: BufferMsg<'bufIn, 'bufInA, 'bufOut, 'bufState>) 
+                (bufferState: BufferState<'bufIn, 'bufInA, 'bufOut, 'bufState>) ->
+                handleBufferMessage msg bufferState
 //------------------------------------
 
 
@@ -908,7 +863,7 @@ module StreamInfrastructure =
         // }
 
         // we will need to incorporate an aspect of ActorLocation for actors whose existence is a dependency tk
-        let bufferMsgHandlerID = Tweega.Utils.getTempID("bufferMsgHandler_")
+        let bufferMsgHandlerID = Tweega.Shared.Utils.getIDWithRoot("bufferMsgHandler_")
 
 
         toConsole( sprintf "in createBufferBox, creating mailbox : %s\n" bufferMsgHandlerID)
@@ -917,151 +872,26 @@ module StreamInfrastructure =
             let rec loop (state: BufferState<'bufIn,'bufInA,'bufOut,'bufState>) = actor {
                 let! (msg:BufferMsg<'bufIn, 'bufInA, 'bufOut, 'bufState>) = mailbox.Receive()
 
-                let newState = bufferInputHandler mailbox msg state
+                let newState = handler mailbox msg state
                 return! loop newState
             }
 
             loop initialBufferState
 
-    
+        
 
-    //++-------------------------------------------------------
 
     //this uses Agents instead of actors and should be replaced tk, particuarly for anything that needs supervision - see createBufferBox2
-    let createBufferBox<'bufIn, 'bufInA, 'bufOut, 'bufState>(bufName: string, initialBufferState :BufferState<'bufIn, 'bufInA, 'bufOut, 'bufState>) =
-        let bufferInputHandler (msg:BufferMsg<'bufIn, 'bufInA, 'bufOut, 'bufState>) (bufferState: BufferState<'bufIn, 'bufInA, 'bufOut, 'bufState>) =
-            //update to return a result at some point
-            match msg with
-                BufferMsg.UpdateState updater ->
-                    let bufferState' = updater(bufferState.BufferState)
-                    {bufferState with BufferState = bufferState';}
-
-                | BufferMsg.SetGenerator (generator, dispatchStrategy) ->
-                    match dispatchStrategy with
-                        | Dispatch dispatchWhen ->
-                            match bufferState.Pending.Length + bufferState.Backlog.Length > 0 with
-                            | true ->
-                                let (newPending, newBacklog, newState) = //what is happening with newState tk tbd?
-                                    bufferState.BufferInputHandler (Some generator) (None, bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
-
-                                match dispatchWhen with
-                                | AlwaysDispatch ->
-                                    {bufferState with Generator = generator; DispatchStrategy = Dispatch AlwaysDispatch; Pending = newPending; Backlog = newBacklog; BufferState = newState;}
-
-                                | SingleDispatch ->
-                                    {bufferState with Generator = generator; DispatchStrategy = NoDispatch; Pending = newPending; Backlog = newBacklog; BufferState = newState;}
-                            | false ->
-                                {bufferState with Generator = generator; DispatchStrategy = dispatchStrategy}
-
-                        | NoDispatch->
-                            {bufferState with Generator = generator; DispatchStrategy = dispatchStrategy}
-
-                | BufferMsg.AddToBuffer values ->
-                    let maybeNewStrategy, maybeGen =
-                        match bufferState.DispatchStrategy with
-                        | NoDispatch -> 
-                            // toConsole( "Strategy is no dispatch")
-                            None, None
-                        | Dispatch dispatchWhen ->
-                            // toConsole( "Strategy is DISPATCH ")
-                            match dispatchWhen with
-                            | AlwaysDispatch -> None, Some bufferState.Generator
-                            | SingleDispatch -> Some NoDispatch, Some bufferState.Generator
-
-                    let(newPending, newBacklog, newState) = bufferState.BufferInputHandler maybeGen (Some values, bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
-                    // toConsole( sprintf "For buffer %s After buffer handler : koyaniskatsu: %d, %d" bufName newPending.Length newBacklog.Length)
-                    // toConsole(sprintf  "Maybe Strategy: %A : mmaybeGen: %A" maybeNewStrategy maybeGen)
-
-                    match maybeNewStrategy with
-                        | Some strategy -> {bufferState with DispatchStrategy = strategy; Pending = newPending; Backlog = newBacklog}
-                        | None -> {bufferState with Pending = newPending; Backlog = newBacklog; BufferState = newState}
-
-
-                | BufferMsg.AddToBufferBulk vList ->
-                    let maybeNewStrategy, maybeGen =
-                        match bufferState.DispatchStrategy with
-                        | NoDispatch -> None, None
-                        | Dispatch dispatchWhen ->
-                            match dispatchWhen with
-                            | AlwaysDispatch -> None, Some bufferState.Generator
-                            | SingleDispatch -> Some NoDispatch, Some bufferState.Generator
-
-                    let bLog =
-                        vList |>
-                        List.fold(fun acc v ->
-                            v :: acc
-                        ) bufferState.Backlog
-
-                    let(newPending, newBacklog, newState) = bufferState.BufferInputHandler maybeGen (None, bufferState.Pending, bLog, bufferState.BufferState)
-
-                    match maybeNewStrategy with
-                        | Some strategy -> {bufferState with DispatchStrategy = strategy; Pending = newPending; Backlog = newBacklog; BufferState = newState}
-                        | None -> {bufferState with Pending = newPending; Backlog = newBacklog; BufferState = newState}
-
-
-                | BufferMsg.SetStrategy dispatchStrategy ->
-                    let bufferHasData = bufferState.Pending.Length + bufferState.Backlog.Length > 0
-                    // toConsole( sprintf "Setting strategy on buffer %s" bufferState.BufName)
-                    let newStrategy, newPending, newBacklog, newState =
-                        match dispatchStrategy with
-                        | NoDispatch -> (NoDispatch, bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
-                        | Dispatch dispatchWhen ->
-                            let nextStrategy =
-                                match dispatchWhen with
-                                | AlwaysDispatch -> dispatchStrategy
-                                | SingleDispatch ->
-                                    // toConsole(sprintf  "Setting single dispatch for %s: %d:%d" bufName bufferState.Pending.Length  bufferState.Backlog.Length)
-                                    // if there is no data in the buffer then strategy remains single dispatch, otherwise NoDispatch
-                                    if bufferHasData then
-                                        // toConsole( "With data so just this time")
-                                        NoDispatch
-                                    else
-                                        (Dispatch SingleDispatch)
-                            // need to save newState tk
-                            let(newPending', newBacklog', newState') =
-                                match bufferHasData with
-                                | true ->
-                                    bufferState.BufferInputHandler (Some bufferState.Generator) (None, bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
-                                | false ->
-                                    (bufferState.Pending, bufferState.Backlog, bufferState.BufferState)
-
-                            (nextStrategy, newPending', newBacklog', newState')
-
-                    {bufferState with DispatchStrategy = newStrategy; Pending = newPending; Backlog = newBacklog; BufferState = newState}
-
-                | BufferMsg.TeardownBuffer ->
-                    // is the teardown of a buffer a generic operation or specific to each one,
-                    // in which case how will we manage that?
-                    // if we are shutting down - we need to unsubscribe from any stream provider we might have
-                    // how to do that?  our provider is anyone that is sending us AddToBuffer messages
-                    // and also anyone sending SetStrategy messages, which is getting complicated.
-                    // so we need a list of those and a way to unsubscribe
-                    // hopefully we can postpone some or most of this for now.  The main aim at the moment
-                    // is to close the file writer.
-                    // it looks as if buffer teardonw will be specific to each case as some will have set strategy others add to buffer
-                    // unless those operations came through a function that added the event sources to a list of providers.
-                    // examples
-                        // data coming into combiner buffer
-                        // all buffers will have data sources (AddToBuffer) so we need a complementary function to unsubscribe
-                        // the only way to do this will be to pass an id when subscribing
-                        // combiner has multiple source that AddToBuffer - so we need to flag wherever we set that.
-
-                        // the other message type was set strategy
-                        // this might refer to the same source as add to buffer
-                        // where set strategy is called from within dispatcher it can be ignored as
-                        // the dispatcher is the same as the generator which depends on AddToBuffer messages
-
-                        // so we need to update the subscription process so that we can unsubscribe
-                    // let noOp = fun(_x) -> () // will generator ever have resources to clear?
-
-                    {bufferState with DispatchStrategy = NoDispatch; Pending = list.Empty; Backlog = list.Empty;}
-
+    let createBufferBoxAgent<'bufIn, 'bufInA, 'bufOut, 'bufState>(
+        bufName: string, 
+        initialBufferState: BufferState<'bufIn, 'bufInA, 'bufOut, 'bufState>) =
+        
         let bufBox = MailboxProcessor<BufferMsg<'bufIn, 'bufInA, 'bufOut, 'bufState>>.Start(fun agent ->
 
             let rec loop (state) = async {
                 // Asynchronously wait for the next message
                 let! msg = agent.Receive()
-                let newState = bufferInputHandler msg state
+                let newState = handleBufferMessage msg state
 
                 return! loop newState
             }
@@ -1101,12 +931,12 @@ module StreamInfrastructure =
         
         // this could be generically labelled as topCopyUnpacker tk
 
-
+        // here timestamps are being put onto backlog.  TopSlice was the unpacker which we will need when populating pending
         let timerBufState =
-            initialiseBufferState("timer buffer", vanillaSlicer, subscriberToTimerTick, Dispatch AlwaysDispatch, statusUpdatesToEmitter emitter, gen, NODELAY, topSlice, NO_BUFFER_STATE)
+            initialiseBufferState("timer buffer", vanillaSlicer id, subscriberToTimerTick, Dispatch AlwaysDispatch, statusUpdatesToEmitter emitter, gen, NODELAY, NO_BUFFER_STATE)
 
         let timerBufBox =
-            createBufferBox("timer Gen", timerBufState)
+            createBufferBoxAgent("timer Gen", timerBufState)    // use akka actor? tk
 
         let init = timerInit(timerConfig, timerBufBox)
 
@@ -1187,7 +1017,7 @@ module StreamInfrastructure =
                 statusUpdater(subscriberID, streamStatus1, streamsStatus2)
 
         toConsole(sprintf  "Calling subscription point mnb for subscriber %s"  subscriberID)
-        let subscriberType = Tweega.Utils.getTypeStr(subscriber.GetType())
+        let subscriberType = Tweega.Shared.Utils.getTypeStr(subscriber.GetType())
         toConsole(sprintf  "boxing type %s" subscriberType)
 
         let boxedSubscriber = box subscriber
@@ -1206,11 +1036,11 @@ module StreamInfrastructure =
 
     let createSlicedStreamAPI<'bufIn, 'bufInA, 'bufOut, 'bufState>
         (tag: TagAlias)
-        (slicer: bool -> list<'bufInA> * list<'bufInA> * 'bufState -> list<'bufInA> * list<'bufInA> * list<'bufInA> * option<TagAlias * StreamStatus * StreamStatus> * 'bufState)
+        (slicer: bool -> list<'bufInA> * list<'bufIn> * 'bufState -> list<'bufInA> * list<'bufInA> * list<'bufIn> * option<TagAlias * StreamStatus * StreamStatus> * 'bufState)
         (unpack: Generator<'bufIn * list<'bufInA> * 'bufState, list<'bufInA> * 'bufState>) 
         (generator:Generator<list<'bufInA>, 'bufOut>) 
         (bufferState: 'bufState)
-        : Subscriber<list<'bufIn>> * MessageHandler<TypedStreamAPI<'bufOut>> =
+        : Subscriber<'bufIn> * MessageHandler<TypedStreamAPI<'bufOut>> =
 
         // pass in buffer name - it is not always chabbithog tk
         
@@ -1260,17 +1090,26 @@ module StreamInfrastructure =
         // controlling stream status (dispatch strategy) only makes sense if consumer has control over the stream
         // in other words the stream is not being fanned out to multiple consumers - in which case there needs to
         // be a buffer per consumer tk
-        let bufferName = sprintf "%s buffer" tag
-        let streamBufState =
-            initialiseBufferState(bufferName, slicer, dispatchToEmitter, NoDispatch, statusUpdatesToEmitter emitter, generator, NODELAY, unpack, bufferState)
+        let streamBufState:BufferState<'bufIn,'bufInA,'bufOut,'bufState> =
+            initialiseBufferState(
+                "Chabbithog buffer",
+                slicer,
+                dispatchToEmitter,
+                NoDispatch,
+                statusUpdatesToEmitter emitter,
+                generator,
+                NODELAY,
+                // unpack,
+                bufferState
+            )
 
         let streamBufBox =
-            createBufferBox("Stream API Buffer for Chabbithog", streamBufState)
+            createBufferBoxAgent("Stream API Buffer for Chabbithog", streamBufState)
 
         let writeToBuffer = 
-            fun m ->
+            fun (bufIn: 'bufIn) ->
                 // toConsole( sprintf "Papageno buff")
-                m |> (BufferMsg.AddToBuffer >> streamBufBox)
+                bufIn |> (BufferMsg.AddToBuffer >> streamBufBox)
 
         
         // what to do with this tk?  Do we need prevStatus to always be passed in? tk

@@ -1,13 +1,11 @@
-namespace Tweega
-open Tweega.Shared.XFrameworkTypes
+namespace Tweega.Shared
 open System.Text.RegularExpressions
 open System
+open Tweega.Shared.Types
 
 // this may need to be in its own project to be accessible to other projects that Server.fsproj
 module Utils =
 
-    
-//should this be a util or go somewhere shared?
     type Microsoft.FSharp.Collections.List<'a> with
         static member Join (lists: list<list<'T>>) =
             //collapses a list of list one level
@@ -25,28 +23,38 @@ module Utils =
             List.map fab
             |> List.Join
 
-        static member AllOf (predicate: 'T -> bool, xs:list<'T>)  =
+        static member AllOf (predicate: 'T -> bool, ts:list<'T>)  =
             //what should an empty list evaluate to? currently returns true  could  have a default passed in
-            let rec allOf(xs':list<'T>)  =
-                match xs' with
+            let rec allOf(ts':list<'T>)  =
+                match ts' with
                 | h :: t ->
                     match predicate h with
                     | true -> allOf t
                     | false -> false
                 | _ -> true
-            allOf xs
+            allOf ts
     
-        static member AnyOf (predicate: 'T -> bool, xs:list<'T>)  =
+        static member AnyOf (predicate: 'T -> bool, ts:list<'T>)  =
             //what should an empty list evaluate to? currently returns false  could  have a default passed in
-            let rec anyOf(xs':list<'T>)  =
-                match xs' with
+            let rec anyOf(ts':list<'T>)  =
+                match ts' with
                 | h :: t ->
                     match predicate h with
                     | false -> anyOf t
                     | true -> true
                 | _ -> false
-            anyOf xs
+            anyOf ts
     
+    
+        static member AnyTry (tries: list<'T -> option<'U>>, t: 'T)  =
+            let rec anyTry(tries': list<'T -> option<'U>>)  =
+                match tries' with
+                | try' :: tail ->
+                    match try' t with
+                    | None -> anyTry tail
+                    | someT -> someT
+                | _ -> None
+            anyTry tries
     
     let toConsole(msg: string) =
         printfn "%s" msg
@@ -92,10 +100,14 @@ module Utils =
 
     let mutable tempID = 1111
 
-    let getTempID(root: string) =
+    let getIDWithRoot(root: string) =
         tempID <- tempID + 1
         sprintf "%s_%d" root tempID
 
+    
+    let getTempID() =
+        tempID <- tempID + 1
+        tempID
 
     let mutable portID = 9025
     let getFreePort() =
@@ -131,16 +143,13 @@ module Utils =
             toConsole( sprintf "Unable to find message handler from map in forwardMessage: %s, %A" caller key )  //how to handle streamwriter not found? tk
             onFailure()
 
-    let countTSVs (tsvs: seq<TimeSeriesValue<'Data>>) =
-        // tsvs |>
-        // Seq.fold (fun acc tsv ->
-        //     acc + 1
-        // ) 0
-        123
-
     let inline lift<'a, 'b, 'c> (bc: 'b ->'c) (ab: 'a -> 'b) : 'a -> 'c =
         fun (a:'a) ->
             a |> (ab >> bc)
+
+
+    let inline always<'a> (a: 'a) : _ -> 'a =
+        fun (_) -> a
 
     let inline tryUnbox<'a> (o:obj) =
         match o with
@@ -178,8 +187,8 @@ module Utils =
         | true -> Some ()
         | false -> None
 
-    let tryGetFirst<'T>(items: list<'T>) = 
-        match items with 
+    let tryGetFirst<'T>(tokens: list<'T>) = 
+        match tokens with 
         | [] -> None
         | h :: t -> Some h
 
@@ -193,13 +202,18 @@ module Utils =
     let (|IsTruex|_|) pred x =
         if pred x then Some () else None
 
-    let (|IsTrue|_|)  x =
+    let (|IsTrue|_|) x =
         if x = true then Some () else None
 
     
     let (|Eq|_|) expected value =
         match expected = value with 
         | true -> Some ()
+        | _ -> None 
+
+    let (|HasValue|_|) value =
+        match value with 
+        | Some v -> Some v
         | _ -> None 
 
     let parseBool (s:string) : option<bool> = 
@@ -329,7 +343,7 @@ module Utils =
         List.fold (fun acc {Tag=_tag; KVPs = kvps} ->
             kvps |>
             List.fold(fun acc' i->
-                (i.key, i.value) :: acc'
+                (i.Key, i.Value) :: acc'
             ) acc
         ) []
 
@@ -345,6 +359,130 @@ module Utils =
     let kvpsToMap(options: list<KVP>) =
         options |>
         List.fold(fun acc' i->
-            Map.add i.key i.value acc'
+            Map.add i.Key i.Value acc'
         ) Map.empty
                 
+    let trimString(s: string) =
+        s.Trim()
+
+    let tokeniseOn(splitOn: string) (s:string) = //splitOn is reg exp
+        Regex.Split(s, splitOn)
+        |> List.ofArray
+        |> List.map trimString
+
+
+
+    let tokenise(s:string) =
+        let sTrim = s.Trim()
+        match sTrim.Length with 
+        | Eq 0 -> []
+        | _ ->
+            Regex.Split(sTrim, "\s+")
+            |> List.ofArray
+
+    let (|Match|_|) pattern input =
+        let m = Regex.Match(input, pattern) in
+        if m.Success then Some (List.tail [ for g in m.Groups -> g.Value ]) else None
+
+    let (|StartsWith|_|) (p:string) (s:string) =
+        if s.StartsWith(p) then
+            Some()
+        else
+            None
+        
+    let inline stringf format (x : ^a) = 
+        (^a : (member ToString : string -> string) (x, format))
+    
+    let optionFromPredicate pred x =
+        if pred x then Some () else None
+
+ 
+    let concatLists(listA: list<'T>, listB: list<'T>) : list<'T> =
+        List.fold(fun acc t -> t :: acc) listA listB
+
+    let mergeLists(lists: list<list<'T>>) : list<'T> =
+        let rec joinLists(l: list<'T>, lists: list<list<'T>>) : list<'T> =
+            match lists with
+                | [] -> l            
+                | h :: rest ->
+                    let joined = concatLists(l, h)
+                    joinLists(joined, rest)
+
+        match lists with
+            | [] -> []
+            | h :: t -> joinLists(h, t)
+
+    // https://stackoverflow.com/questions/16706047/cut-a-list-by-index-n-in-f
+    let partitionList (n, xs) =
+        let rec aux = function
+            | 0, xs, ys -> List.rev xs, ys
+            | n, xs, y :: ys -> aux (n - 1, y :: xs, ys)
+            | _ -> failwith "invalid arguments"
+        aux (n, [], xs)
+
+
+    let inline delayed f a = fun () -> f(a)
+
+
+    let reverseString (input: string) =
+        input |> Seq.rev |> Seq.toArray |> System.String
+
+    
+    let tryResolveBool (s:string) : option<bool> = 
+        match System.Boolean.TryParse(s) with 
+        | true, n -> Some n
+        | _ -> None
+        
+    let tryResolveInt16 (s:string) =
+        match System.Int16.TryParse(s) with 
+        | true, n -> 
+            Some (n |> (NumericValue.Int16))
+        | _ -> None
+    
+    let tryResolveInt32 (s:string) =
+        match System.Int32.TryParse(s) with 
+        | true, (n:int32) -> 
+            Some (n |> (NumericValue.Int32))
+        | _ -> None
+
+    let tryResolveInt64 (s:string) =
+        match System.Int64.TryParse(s) with 
+        | true, n ->
+            Some (n |> (NumericValue.Int64))
+
+//            Some ((float) n |> (LiftedValue.Numeric))
+        | _ -> None
+
+    let tryResolveFloat32 (s:string) =
+        match System.Single.TryParse(s) with 
+        | true, n ->
+            Some (n |> (NumericValue.Float32))
+
+//            Some ((float) n |> (LiftedValue.Numeric))
+        | _ -> None
+    
+    
+    let tryResolveFloat64 (s:string) =
+        match System.Double.TryParse(s) with 
+        | true, n -> 
+            Some (n |> (NumericValue.Float64))
+
+//            Some (n |> LiftedValue.Numeric)
+        | _ -> None
+
+    let tryResolveDate(format, provider) (s: string) : option<System.DateTime> =
+        try 
+            let ts = System.DateTime.ParseExact(s, format, provider)
+            Some ts
+        with 
+            _ -> None
+
+    let tryResolveNumber(numStr: string) =
+        let numericParsers = [
+            tryResolveInt16;
+            tryResolveInt32;
+            tryResolveInt64;
+            tryResolveFloat32;
+            tryResolveFloat64;
+        ]
+        List.AnyTry(numericParsers, numStr)

@@ -1,5 +1,5 @@
 dotnet clean
-dotnet build src\XFramework\XFramework.fsproj
+dotnet build src\Shared\Shared.fsproj
 dotnet build src\Utils\Utils.fsproj
 dotnet build src\AkkaRouter\AkkaRouter.fsproj
 dotnet build src\StreamSharedClient\StreamSharedClient.fsproj

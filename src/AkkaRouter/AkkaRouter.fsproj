@@ -6,12 +6,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\XFramework\XFramework.fsproj" />
-    <ProjectReference Include="..\Utils\Utils.fsproj" />
+    <ProjectReference Include="..\Shared\Shared.fsproj" />
+    <ProjectReference Include="..\StreamInfrastructure\StreamInfrastructure.fsproj" />
+    <ProjectReference Include="..\StreamSharedServer\StreamSharedServer.fsproj" />
+
   </ItemGroup>
   
   <ItemGroup>
     <Compile Include="Types.fs" />
+    <Compile Include="SystemConfig.fs" />
     <Compile Include="Mailbox.fs" />
   </ItemGroup>
   
