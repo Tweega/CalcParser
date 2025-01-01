@@ -280,8 +280,8 @@ module Mailbox =
             fun
                 (msg: BufferMsg<'bufIn, 'bufInA, 'bufOut, 'bufState>) 
                 (bufferState: BufferState<'bufIn, 'bufInA, 'bufOut, 'bufState>) ->
-                let gg = handleBufferMessage msg bufferState
-                (gg, Tweega.Shared.Cmd.none)
+                let buffState = handleBufferMessage msg bufferState
+                (buffState, Tweega.Shared.Cmd.none)
 
         let actorSystem = ActorSystemManager.get()
         let iActorRef = createAkkaMailbox(actorSystem, bufName, handleMsg, initialBufferState)
