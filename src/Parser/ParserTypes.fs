@@ -71,8 +71,6 @@ module ParserTypes =
     | DateOffset
 
 
-
-
    // [<RequireQualifiedAccess>]
     type Constant = 
     | StringConst of string

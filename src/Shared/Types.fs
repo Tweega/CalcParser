@@ -58,11 +58,6 @@ module Types =
     | Left of  'Left
     | Right of 'Right
 
-
-
-    
-
-    // find a new home for these - not STTEmulator
     type Field = KVP
     type Record = TaggedKVPs
     type RecordList = list<Record>

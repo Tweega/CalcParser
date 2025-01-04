@@ -294,12 +294,6 @@ module ServerStreamTypes =
         type StreamProxyMsg<'Data> =
             | BuildStreamAPIs of Subscriber<list<StreamResultWithFunctionName<'Data>>> * TagList // taglist should be options? tk tbd
 
-        [<RequireQualifiedAccess>]
-        type StreamProxyMsgInternalObsolete<'Data, 'Msg> =
-            | StreamProxyMsg of StreamProxyMsg<'Data>   // flatten BuildStreamAPIs into here
-            | HandleConnectionResult of ConnectionResult
-            | PostDeployInit of ActorLocation<'Msg>
-
         // message for client side consumer of stream data - for downstream flows
         [<RequireQualifiedAccess>]
         type PipeConsumerMsg<'In, 'Out> =

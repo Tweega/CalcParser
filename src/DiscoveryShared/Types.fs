@@ -6,7 +6,7 @@ module Types =
     open System
 
     type RequestID = string
-    type DataType = string  // have to put some thought into how to represent data types safely - class GUIDs?
+    type DataTypeObsolete = string  // have to put some thought into how to represent data types safely - class GUIDs?
     type DeploymentID = string
     type StreamAPIobj = obj
 
@@ -55,9 +55,11 @@ module Types =
         | SingleDispatch
 
 
+    type BoxedSubscriptionPoint = obj
+
     [<RequireQualifiedAccess>]
     type StreamAPI = //  the same as TypedStreamAPI but for the function manager to make request without knowing type so it can process lists of inputs of different types
-    | StreamSubscribe of ClientRef * obj * Subscriber<ClientRef * ServerRef * StreamStatus * StreamStatus> //live stream request
+    | StreamSubscribe of ClientRef * BoxedSubscriptionPoint * Subscriber<ClientRef * ServerRef * StreamStatus * StreamStatus> //live stream request
     | StreamUnsubscribe of ClientRef
     | StreamTeardown    //who should be allowed to do this? tk REMOVE this tk it is not a client side thing.
     | StreamStart of DispatchWhen
