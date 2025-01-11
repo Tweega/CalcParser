@@ -49,12 +49,24 @@ module ServerStreamTypes =
     // we may also want to add state so that buffer can compress on the fly
 
     //'bufIn will be backlog, bufInA is pending 
-    type BufferHandler<'bufIn, 'bufInA, 'bufState> = bool -> list<'bufInA> * list<'bufIn> * 'bufState -> list<'bufInA> * list<'bufInA> * 'bufIn list * option<TagAlias * StreamStatus * StreamStatus> * 'bufState
+    type BufferHandler<'bufIn, 'bufInA, 'bufState> = 
+        bool 
+            -> list<'bufInA> * list<'bufIn> * 'bufState //pending, backlog, state
+            -> 
+                list<'bufInA> //data release by buffer - to process
+                * list<'bufInA> //new pending
+                * 'bufIn list //new backlog
+                * option<TagAlias * StreamStatus * StreamStatus> // stream status inmput stream may send a termination value
+                * 'bufState // new state
 
     type BufferInputHandler<'bufIn, 'bufInA, 'bufOut, 'bufState> = 
-        (option<Generator<list<'bufInA>, 'bufOut>> * Subscriber<'bufOut>) -> option<'bufIn> * list<'bufInA> * list<'bufIn> * 'bufState-> list<'bufInA> * list<'bufIn> * 'bufState 
-    //  option<Generator<list<'bufInA>, 'bufOut>> -> option<'bufIn> * list<'bufInA> * list<'bufIn> * 'bufState-> list<'bufIn> * list<'bufInA> * 'bufState
-    //  option<Generator<list<'bufInA>, 'bufOut>> -> option<'bufIn> * 'bufInA list * 'bufIn list * 'bufState -> 'bufInA list * 'bufIn list * 'bufState
+        (option<Generator<list<'bufInA>, 'bufOut>> //may be handed a generator
+        * Subscriber<'bufOut>) // and a dispatcher for generated value (should be inside the option? tk) this is new - not in remote
+            -> option<'bufIn> // incoming data - assumed to be same type as backlog? ie no unpacker
+            * list<'bufInA> // pending
+            * list<'bufIn> // backlog
+            * 'bufState 
+            -> list<'bufInA> * list<'bufIn> * 'bufState // new pending, new backlog, new state
 
     // might a buffer need to dispatch status updates? tk 
     // to client
@@ -71,7 +83,7 @@ module ServerStreamTypes =
     type BufferState<'bufIn, 'bufInA, 'bufOut, 'bufState> = {
         Generator: Generator<list<'bufInA>, 'bufOut>
         // Unpacker: Generator<list<'bufIn>, list<'bufInA>>
-        Dispatcher: Subscriber<'bufOut>  //function that forwards buffer data to connsumer (optionally transforming data on the way)
+        Dispatcher: Subscriber<'bufOut>  //function that forwards buffer data to consumer
         BufferInputHandler:BufferInputHandler<'bufIn, 'bufInA, 'bufOut, 'bufState>
         DispatchStrategy: DispatchStrategy
         //dispatcher: Subscription<'bufIn> //this will send a BufferMsg to either another buffer or a stream

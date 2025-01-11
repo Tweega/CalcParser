@@ -466,7 +466,6 @@ module StreamInfrastructure =
         (downstreamStatusUpdater: Subscriber<TagAlias * StreamStatus * StreamStatus>) 
         (inputHandler: BufferHandler<'bufIn, 'bufInA, 'bufState>) 
         // (unpack: Generator<'bufIn * list<'bufInA> * 'bufState, list<'bufInA> * 'bufState>) 
-        (_bufferState: 'bufState) 
         : (option<Generator<list<'bufInA>, 'bufOut>> * Subscriber<'bufOut>) -> option<'bufIn> * list<'bufInA> * list<'bufIn> * 'bufState-> list<'bufInA> * list<'bufIn> * 'bufState 
         =
         fun (maybeGenerator: option<Generator<list<'bufInA>, 'bufOut>>, dispatcher:Subscriber<'bufOut>) (
@@ -478,6 +477,7 @@ module StreamInfrastructure =
             
             let bProcess = Option.isSome maybeGenerator
             // if we have data it will be a list<'bufIn> Unpack each one produce new backlog:list<bufInA>
+            // data simply added to the backlog without processing
             let backlog' = 
                 match maybeBufIn with
                 | Some  bufin ->
@@ -486,13 +486,13 @@ module StreamInfrastructure =
 
             // toConsole( sprintf "bProcess in %s is :%b, %d" handlerFor bProcess backlog'.Length)
 
-            let (forDispatch, newPending, newBacklog, maybeStatusChange, newState) =
+            let (dataForDispatch, newPending, newBacklog, maybeStatusChange, newState) =
                 inputHandler bProcess (pending, backlog', bufState) 
 
-            if not(forDispatch.IsEmpty) then
+            if not(dataForDispatch.IsEmpty) then
                 maybeGenerator |> 
                 Option.iter (fun gen ->
-                    forDispatch |> (gen >> dispatcher)
+                    dataForDispatch |> (gen >> dispatcher)
                 )
 
             match maybeStatusChange with
@@ -715,7 +715,7 @@ module StreamInfrastructure =
         //let hbi: BufferHandler<'bufIn> = handleBufferInput
 
         let bih:(option<Generator<list<'bufInA>, 'bufOut>> * Subscriber<'bufOut>) -> option<'bufIn> * list<'bufInA> * list<'bufIn> * 'bufState-> list<'bufInA> * list<'bufIn> * 'bufState = 
-            makeHandler bufName downStreamStatusUpdater buffHandler bufState
+            makeHandler bufName downStreamStatusUpdater buffHandler
         
         {
             Generator = generator;
@@ -727,7 +727,7 @@ module StreamInfrastructure =
             Backlog = backlog
             Delay = delay
             BufferState = bufState
-            BufName= bufName
+            BufName = bufName
         }
 
     //----------
