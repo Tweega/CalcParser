@@ -6,15 +6,115 @@ open Parser.ParserTypes
 open Tweega.Discovery.Shared.Types
 open Tweega.AkkaRouter.Mailbox
 open Tweega.Shared.Utils
+open Parser.ParserTypes
+open Parser.Utils
+open CalcEngine.Utils
 
-type OrchestratorBuffer = 
-    {GG: int}
+type OrchestratorBuffer = {
+    Backlog: list<TimeSeriesValue<ResolvedValue>>;
+    Pending: list<TimeSeriesValue<ResolvedValue>>;
+    IsStepped: bool; // only numeric values should be stepped - see if we can enforce this
+}
+
 
 [<RequireQualifiedAccessAttribute>]
 module OrchestratorBuffer =
     // buffer processing functionality
     let handleBufferInput() = 2 
     let tearDownBuffer() = ()
+
+
+    let tryGetValueForTimestamp(ts: Timestamp, ob: OrchestratorBuffer) = 
+
+        let refreshPending(backlog) = 
+            match backlog with 
+                | [] -> [] // Nothing in either buffer
+                | rvs -> List.rev rvs
+
+        let newPending, newBacklog =
+            match ob.Pending with 
+            | [] -> 
+                let p = refreshPending(ob.Backlog)
+                p, []
+            | h :: [] -> 
+                let pending' = refreshPending(ob.Backlog)
+                let p = h :: pending'
+                p, []
+            | x -> x, ob.Backlog
+
+        match newPending with    
+        | [] -> None, [], newBacklog //newBacklog should be emoty        
+        | h :: t -> 
+            match h.Timestamp = ts with
+            | true ->
+                match ob.IsStepped with 
+                | true -> Some h, t, newBacklog // Don't need to keep h for interpolation
+                | false -> Some h, ob.Pending, newBacklog //Pending keeps current value in case it is needed for interpolation
+            | false ->
+                match h.Timestamp < ts with
+                    | true ->  
+                        // we don't have contemporary data 
+                        None, newPending, newBacklog
+                    | false -> // Execution time is after the next time that we havewe can interpolate a value, if required
+                        match t with 
+                        | [] -> // can't interpolate
+                            match ob.IsStepped with 
+                            | true -> 
+                                Some h, t, newBacklog // Don't need to keep h for interpolation
+                                //None, [],[]
+                            | false -> 
+                                // let interpolatedRV = interpolate()
+                                None, ob.Pending, newBacklog //Pending keeps current value in case it is needed for interpolation
+
+                        | next :: rest ->
+                            // we might be able to interpolate
+                            match ob.IsStepped with 
+                            | true -> Some h, t, newBacklog // Don't need to  interpolate
+                            | false -> 
+                                
+                                match interpolateRVs(h, next, ts) with 
+                                | InterpolationResult.InterpolatedValue (tsv, canReleaseHead) ->
+                                    match canReleaseHead with
+                                    | true ->
+                                        Some tsv, t, newBacklog
+                                    | false -> 
+                                        Some tsv, newPending, newBacklog
+                                | InterpolationResult.DuplicateTimestamps -> 
+                                    // Ignore duplicate timestamps.  
+                                    // remove buffer head and return a Wait signal so that  we don't execute yet. 
+                                    // then when another value comes in from whatever source
+                                    // the current execution time stamp will run again on updated pending state
+                                    // this will mean that the last value for this timestamp will be the one used
+                                    None, t, newBacklog
+                                | InterpolationResult.Wait -> // timestamp after the only timestamp in the buffer
+                                    None, newPending, newBacklog
+
+                                | InterpolationResult.Error msg -> 
+                                    toConsole (sprintf "Error interpolating values: %s" msg)
+                                    // or then we simply ignore the bad val as with duplicate timestamps
+                                    // this may mean that some caluculations are thrown away
+                                    // what we want to avoid is getting a bad value into the head of the interpolation
+                                    let {Timestamp = ts; Value = hValue} = h
+                                    let {Timestamp = ts; Value = nextValue} = next
+
+                                    let cleanPending = 
+                                        match hValue, nextValue with 
+                                        | ResolvedValue.BadVal _, ResolvedValue.BadVal _ ->
+                                            rest
+                                        |  _, ResolvedValue.BadVal _ ->
+                                            h :: rest
+                                        | ResolvedValue.BadVal _, _ ->
+                                            // this situation should only occur at the very start of a backfill
+                                            // in which case it is the equivalent of not having had a value at that time at all
+                                            next :: rest
+                                        | _ -> 
+                                            rest  // this should not be possible
+                                
+                                    None, cleanPending, newBacklog 
+
+                                
+    let addToBuffer(tsv: TimeSeriesValue<ResolvedValue>, ob: OrchestratorBuffer) = 
+        {ob with Backlog = tsv :: ob.Backlog}
 
 
 module Orchestrator =
@@ -28,8 +128,10 @@ module Orchestrator =
         | StreamStatusUpdate of StreamID * StreamStatus
 
     type OrchestratorState = {
-        Buffers: Map<StreamID, list<TimeSeriesValue<ResolvedValue>>>
+        InputBuffers: Map<StreamID, list<TimeSeriesValue<ResolvedValue>>>
+        ExecutionBuffer: List<StreamID * ResolvedValue> // how will the function know the name of the stream/variable - as we process a workflow we will know the name of the stage - we are not at that stage yet
         StreamStatuses: Map<StreamID, StreamStatus>
+        ExecutionSchedule: Set<Timestamp>
     }
 
 
@@ -128,6 +230,7 @@ module Orchestrator =
                 
         *)
 
+        // orchestrator slicer should operate on an ordered set of timestamps
         let orchestratorSlicer = 
             fun 
                 (bSend: bool) 

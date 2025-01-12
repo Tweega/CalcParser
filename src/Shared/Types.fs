@@ -7,16 +7,6 @@ module Types =
     type ClientRef = string
     type ServerRef = string
 
-
-    type TimeSeriesValue<'T> = {
-        Timestamp: Timestamp
-        Value: 'T
-    }
-
-    type TaggedValues<'T> = {
-        Tag: string
-        Values: list<'T>
-    }
     type KVP = { Key:string; Value:string }
 
     type TaggedKVPs = {
@@ -125,3 +115,19 @@ module Types =
     | DateOffset of int * TimeUnit  // ditto // would a date offset be a resolved value? perhaps yes it is something that can appear in a binary operation like plus, minus
     // need to add lists tk
 
+
+    [<RequireQualifiedAccess>]
+    type TimeInterpolation =
+    | BeforeStart
+    | AfterEnd
+    | Between of float  // Percentage between 0.0 and 100.0
+    | DuplicateTimestamps
+
+    type CanReleaseHead = bool
+
+    [<RequireQualifiedAccess>]
+    type InterpolationResult<'T> =
+    | InterpolatedValue of 'T //TimeSeriesValue<ResolvedValue> * CanReleaseHead
+    | DuplicateTimestamps
+    | Wait // timestamp after the only timestamp in the buffer
+    | Error of string

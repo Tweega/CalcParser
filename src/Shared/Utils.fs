@@ -6,6 +6,7 @@ open Tweega.Shared.Types
 // this may need to be in its own project to be accessible to other projects that Server.fsproj
 module Utils =
 
+    
     type Microsoft.FSharp.Collections.List<'a> with
         static member Join (lists: list<list<'T>>) =
             //collapses a list of list one level
@@ -486,3 +487,19 @@ module Utils =
             tryResolveFloat64;
         ]
         List.AnyTry(numericParsers, numStr)
+
+
+    let percentageTimeElapsed (startTime: DateTime, endTime: DateTime, ts: DateTime) =
+        let totalDuration = endTime - startTime
+        
+        match totalDuration.Ticks > 0L with 
+        | true -> 
+            if ts < startTime then
+                TimeInterpolation.BeforeStart
+            elif ts > endTime then
+                TimeInterpolation.AfterEnd
+            else
+                let elapsedDuration = ts - startTime
+                let percentage = (elapsedDuration.TotalMilliseconds / totalDuration.TotalMilliseconds) * 100.0
+                TimeInterpolation.Between percentage
+        | false -> TimeInterpolation.DuplicateTimestamps

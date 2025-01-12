@@ -3,9 +3,11 @@
 module CalcParser =
     open ParserTypes
     open System.Text.RegularExpressions
-    open Tweega.Utils    
+    open Tweega.Shared.Types    
+    open Tweega.Shared.Utils
     open Microsoft.FSharp.Core.Operators.Checked
     open System
+    open Parser.Utils
 
     [<RequireQualifiedAccess>]
     type TimeAlias =
@@ -64,80 +66,6 @@ module CalcParser =
     let quot = '\u0022'    
 
     open System.Text.RegularExpressions
-
-
-    let reApply(re: string, s: string) =
-        // s is a string to be parsed and it is expected that this operation will match some or none characters from the front
-        // either as a direct match or as a single group in which case some marker characters, such as brackets will be thrown away
-        printfn "reApply has received [%s]" s
-        let rx = Regex(re, RegexOptions.IgnoreCase + RegexOptions.Multiline +  RegexOptions.Compiled)
-        let m = rx.Match(s)
-
-        match m.Success with 
-        | true -> 
-            let (matchResult, newS) = 
-                match m.Captures.Count with
-                | 1 ->  // working here on whitespace issue.  we may need to match on whitespace separately
-                    printfn "We have a match: %A %d" m.Captures[0].Value m.Length
-                    (Ok (Some m.Groups[1].Value), s[m.Length ..])
-                | _ -> 
-                    let msg = sprintf "More than one group matched in reg exp: %s on string: %s" re s
-                    (Error msg), s
-
-            matchResult, newS    
-
-        | false -> 
-            // printfn "no match: %s :%s " re s
-            Ok None, s
-
-    
-    let determinePrecision (a: NumericValue) (b: NumericValue) : Number =
-        // Determines the highest precision between two values
-        match a, b with
-        | NumericValue.Float64 _, _ | _, NumericValue.Float64 _ -> Number.Float64
-        | NumericValue.Float32 _, _ | _, NumericValue.Float32 _ -> Number.Float32
-        | NumericValue.Int64 _, _ | _, NumericValue.Int64 _ -> Number.Int64
-        | NumericValue.Int32 _, _ | _, NumericValue.Int32 _ -> Number.Int32
-        | NumericValue.Int16 _, _ | _, NumericValue.Int16 _ -> Number.Int16
-        | NumericValue.Int8 _, _ | _, NumericValue.Int8 _ -> Number.Int8
-
-    let castToOriginalPrecision (result: float) (precision: Number) : NumericValue =
-        match precision with
-        | Number.Float64 -> NumericValue.Float64 result
-        | Number.Float32 -> NumericValue.Float32 (float32 result)
-        | Number.Int64 -> NumericValue.Int64 (int64 result)
-        | Number.Int32 -> NumericValue.Int32 (int32 result)
-        | Number.Int16 -> NumericValue.Int16 (int16 result)
-        | Number.Int8 -> NumericValue.Int8 (int8 result)
-
-    let toFloat (value: NumericValue) : Result<float, string> =
-        try 
-            let i64 = 
-                match value with
-                | NumericValue.Float64 f -> f
-                | NumericValue.Float32 f -> float f
-                | NumericValue.Int64 i -> float i
-                | NumericValue.Int32 i -> float i
-                | NumericValue.Int16 i -> float i
-                | NumericValue.Int8 i -> float i
-            Ok i64
-        with 
-            | err -> Error err.Message
-
-
-    let toInt64 (value: NumericValue) : Result<int64, string> =
-        try 
-            let i64 = 
-                match value with
-                | NumericValue.Float64 f -> int64 f //this could throw out of bounds error
-                | NumericValue.Float32 f -> int64 f
-                | NumericValue.Int64 i -> i
-                | NumericValue.Int32 i -> int64 i
-                | NumericValue.Int16 i -> int64 i
-                | NumericValue.Int8 i -> int64 i
-            Ok i64
-        with 
-            | err -> Error err.Message
 
 
     let composeParsers(f1: string -> Result<Option<TypedTerm> * string, string>) (f2: string -> Result<option<TypedTerm> * string, string>) =
@@ -459,13 +387,6 @@ module CalcParser =
 
 
 
-    let monthToInt (month:string) =
-        match month.ToLower() with
-        | "jan" -> 1 | "feb" -> 2 | "mar" -> 3 | "apr" -> 4 | "may" -> 5 | "jun" -> 6
-        | "jul" -> 7 | "aug" -> 8 | "sep" -> 9 | "oct" -> 10 | "nov" -> 11 | "dec" -> 12
-        | _ -> failwith "Invalid month"
-
-
     let parseAndHandleFixedDate(input: string) =
         match parseDate(input) with 
         | ParseOK (maybeMatch, remaining) -> 
@@ -586,7 +507,7 @@ module CalcParser =
                     | "/" -> opDivide
                     | "%" -> opModulo
                     | "^" -> opPower
-                    | _ -> noOp
+                    | _ -> ParserTypes.noOp
 
                 let binOp' = {
                     BinaryOp.Operator = binOp;
