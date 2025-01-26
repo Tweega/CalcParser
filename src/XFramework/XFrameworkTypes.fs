@@ -4,17 +4,17 @@ open System
 
 module XFrameworkTypes =
     type TagAlias = string  //include UOM with tag? as in a named supplier of these units tk
-    type Timestamp = System.DateTime
+    // type Timestamp = System.DateTime
 
-    type TimeSeriesValue<'T> = {
-        Timestamp: Timestamp
-        Value: 'T
-    }
+    // type TimeSeriesValue<'T> = {
+    //     Timestamp: Timestamp
+    //     Value: 'T
+    // }
 
-    type TaggedValues<'T> = {
-        Tag: string
-        Values: list<'T>
-    }
+    // type TaggedValues<'T> = {
+    //     Tag: string
+    //     Values: list<'T>
+    // }
     type FilePath = string
     type WriterID = string  //StreamID more generic?
     type ClientRef = string

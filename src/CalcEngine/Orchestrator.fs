@@ -23,7 +23,6 @@ module OrchestratorBuffer =
     let handleBufferInput() = 2 
     let tearDownBuffer() = ()
 
-
     let tryGetValueForTimestamp(ts: Timestamp, ob: OrchestratorBuffer) = 
 
         let refreshPending(backlog) = 
@@ -118,17 +117,14 @@ module OrchestratorBuffer =
 
 
 module Orchestrator =
-    type OrchestratorBufferState = {
-        LastTimeStamp: System.DateTime;
-
-    }
+    
 
     type OrchestratorAPI =
         | NewValues of TaggedValues<TimeSeriesValue<ResolvedValue>>
         | StreamStatusUpdate of StreamID * StreamStatus
 
     type OrchestratorState = {
-        InputBuffers: Map<StreamID, list<TimeSeriesValue<ResolvedValue>>>
+        InputBuffers: Map<StreamID, OrchestratorBuffer>
         ExecutionBuffer: List<StreamID * ResolvedValue> // how will the function know the name of the stream/variable - as we process a workflow we will know the name of the stage - we are not at that stage yet
         StreamStatuses: Map<StreamID, StreamStatus>
         ExecutionSchedule: Set<Timestamp>
@@ -230,73 +226,6 @@ module Orchestrator =
                 
         *)
 
-        // orchestrator slicer should operate on an ordered set of timestamps
-        let orchestratorSlicer = 
-            fun 
-                (bSend: bool) 
-                (pending:list<TaggedValues<TimeSeriesValue<ResolvedValue>>>, 
-                    backlog: list<TaggedValues<TimeSeriesValue<ResolvedValue>>>, 
-                    state: OrchestratorBufferState) ->
-                
-                let (pending', tsvs:list<TimeSeriesValue<ResolvedValue>>) = 
-                    match pending with 
-                    | [] -> ([], [])  // nothing in pending
-                    | h :: t -> (t, h.Values)
-
-                // fold over the backlog - assumption seems to be that the backlog will always be emptied after this
-                let newTSVs, newPending, newActiveState= 
-                    backlog |>
-                    List.fold(fun (accTSVs,accPending, accState) (ttsv:TaggedValues<TimeSeriesValue<float>>) ->
-                        // fold over the tsvs
-
-                        ttsv.Values |>  
-                        List.fold(fun (accTSVs', accPending', accState') (tsv: TimeSeriesValue<float>) ->
-                            match state.IncludePredicate(tsv.Value) with
-                            | true -> 
-                                // reportable -- add to collection
-                                let (startTicks: option<int64>, endTicks:option<int64>) = 
-                                    match accState'.MaybeStartTicks with 
-                                    | None -> (Some tsv.Timestamp.Ticks, None)
-                                    | _tix -> 
-                                        match accState'.MaybeEndTicks with 
-                                            | None -> accState'.MaybeStartTicks, (Some tsv.Timestamp.Ticks)
-                                            | _ -> accState'.MaybeStartTicks,accState'.MaybeEndTicks
-                                            
-                                let newState = 
-                                    {accState' with MaybeStartTicks = startTicks; MaybeEndTicks = endTicks}
-                                tsv :: accTSVs', accPending', newState
-                            | false ->  
-                                // not reportable - start new collection ttsv and add this collection set to  pending
-                                let newState = {accState' with MaybeStartTicks = None; MaybeEndTicks = None}
-                                match accTSVs' with
-                                | [] -> accTSVs', accPending', newState
-                                | _ ->
-                                    [], {Tag = tagName; Values = accTSVs'} :: pending', newState
-                        ) (accTSVs, accPending, accState)
-                    ) (tsvs, pending', bufState)
-                //([], pending, backlog, bufState)
-
-                
-                // newTSVs is still active and will be the new Pending if bSend is true
-                let dispatch, finalPending = 
-                    match (state.DurationPredicate (state.MaybeStartTicks, state.MaybeEndTicks, bSend)) with
-                    | true ->
-                        match newTSVs with 
-                            | [] -> newPending, []
-                            | _ -> 
-                                newPending, [{Tag = tagName; Values = newTSVs}]
-                    | false ->
-                        [], {Tag = tagName; Values = tsvs} :: newPending
-
-
-                // we have processed all the tsvs in backlog
-                // if pipe is off keep results in pending, otherwise 
-                toConsole( sprintf "Dispatch count: %d" dispatch.Length)
-                dispatch, finalPending, [], None, newActiveState    //ActiveBand does bot report state changes(None)
-
-        let unpackBufInA = makeUnpacker id
-        createSlicedStreamAPI tagName activeBandSlicer unpackBufInA id bufState
-        
 
 
         
@@ -408,38 +337,63 @@ module Orchestrator =
                     ) acc
                 ) []  // folding because we may have several strings ["the cat sat on the mat"; "how do you do"]
 
-        let buffHandler = vanillaSingletonSlicer tokeniser
-
-        let parserBufState =
-            initialiseBufferState(
-                buffName,
-                buffHandler, 
-                tempDispatcher, 
-                NoDispatch, 
-                statusHandler, 
-                gen, 
-                NODELAY, 
-                // vanillaUnpack, 
-                NO_BUFFER_STATE)
-
-        let handler = 
-            fun
-                (_mailbox)
-                (msg: BufferMsg<'bufIn, 'bufInA, 'bufOut, 'bufState>) 
-                (bufferState: BufferState<'bufIn, 'bufInA, 'bufOut, 'bufState>) ->
-                handleBufferMessage msg bufferState
-
-        1
-
     let handleMsg msg state =
         match msg with
-        | NewValues taggedTSVs ->
-            // Update buffer for the stream
-            let updatedBuffers = 
-                state.Buffers |> Map.add taggedTSVs.Tag taggedTSVs.Values
-            // Perform calculations or further processing
-            printfn "Received values for %s" taggedTSVs.Tag
-            { state with Buffers = updatedBuffers }, Cmd.none
+        | NewValues {Tag = tag; Values = values} ->
+            let yy = 
+                match state.InputBuffers with 
+                | Exists tag ob -> 
+                    // add input to input buffer
+                    let (newSchedule, newBacklog) = 
+                        taggedTSVs.Values |>
+                        List.fold(fun ((accSchedule:Set<Timestamp>), (accBacklog: list<TimeSeriesValue<ResolvedValue>>)) ({Timestamp = ts; Value = _v } as tsv) ->
+                            (Set.add ts accSchedule, tsv :: accBacklog)
+                        ) state.ExecutionSchedule, ob.Backlog
+
+                    //  
+            
+                    // get the next execution time from this updated schedule
+                    let maybeXT = 
+                        match Set.isEmpty newSchedule with 
+                        | true -> // this would require a TaggedTSV to carry an empty payload, which is unlikely
+                            toConsole("Tagged TSV with an empty payload!!")
+                            None
+                        | false -> 
+                            let xt = Set.minElement newSchedule
+                            // check with each of the buffers whether they can supply a value for this time stamp
+                            let initialAcc:Option<list<StreamID * TimeSeriesValue<ResolvedValue> * list<TimeSeriesValue<ResolvedValue>> * list<TimeSeriesValue<ResolvedValue>>>> = (Some [])
+                            state.InputBuffers |>
+                            Map.toList |>
+                            List.map(fun (streamID, ob) ->
+                                let maybeNewBuffers = OrchestratorBuffer.tryGetValueForTimestamp(xt, ob)
+                                (streamID, maybeNewBuffers)
+                            )
+                            // from list<maybes> we want a maybe of list
+                            |> List.fold(fun acc (streamID, maybeBuffers) ->
+                                match acc with 
+                                | Some acc' ->
+                                    match maybeBuffers with 
+                                    | ((Some tsv), newPending, newBacklog) ->
+                                        Some ((streamID, tsv, newPending, newBacklog) :: acc')
+                                    | _ -> acc
+                                | None -> acc
+                                
+                            ) initialAcc
+            
+                    match maybeXT with 
+                    | Some buffers -> 
+                        // Perform calculations or further processing
+                        buffers |>
+                        List.iter(fun (streamID, _, _, _) -> 
+                            printfn "Can supply value for xt: %A %s" xt streamID
+                        )
+                
+                        { state with InputBuffers = updatedBuffers; ExecutionSchedule = newSchedule }, Cmd.none
+
+            | None -> 
+                // unable to get values for all inputs at time xt
+                { state with InputBuffers = updatedBuffers; ExecutionSchedule = newSchedule }, Cmd.none
+
         
         | StreamStatusUpdate (streamId, status) ->
             // Update stream status
