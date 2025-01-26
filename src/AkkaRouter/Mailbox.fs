@@ -70,15 +70,14 @@ module ActorSystemManager =
         | Some sys -> sys.Terminate() |> Async.AwaitTask |> Async.RunSynchronously
         | None -> failwith "ActorSystem is not initialized."
 
-    let get() =
+    let getSystem() =
         match system with
         | Some sys -> sys
         | None -> 
-            failwith "ActorSystem is not initialized."
+            failwith "ActorSystem is not initialized." // do we want to fail?
 
 
 // Note that Akka has a routing component which this may overlap with - rationalise at some point tk
-module Mailbox =
 
     // generalise this to allow for agents and perhaps other mailbox protocols tk
     // move to somewhere like Tweega.Shared.StreamTypesServer or somewhere all routers can see it
@@ -88,157 +87,152 @@ module Mailbox =
 
     // should this not be in Types.fs? tk
 
-    type ActorLocation<'Msg> = {
-        AddressResolution: AddressResolution
-        ActorPath: string
+type ActorLocation<'Msg> = {
+    ActorName: string;
+    AddressResolution: AddressResolution
+    ActorPath: string
+}
+
+[<RequireQualifiedAccessAttribute>]
+module ActorLocation = 
+    
+
+    let makeEmptyLocation(actorName:string) =
+        {
+            ActorName = actorName;
+            ActorPath = "";
+            AddressResolution = AddressResolution.None
+        }
+
+
+    let resolveAddress(callerActorSystem: ActorSystem, akkaAddress:ActorLocation<'Msg>, callerID:string)  =
+        
+        match akkaAddress.AddressResolution with
+        | AddressResolution.Resolved _iActorRef ->
+            akkaAddress
+            
+        | _ ->
+            try
+                let actorRefTask = callerActorSystem.ActorSelection(akkaAddress.ActorPath).ResolveOne(System.TimeSpan.FromSeconds(10.0))
+                let iActorRef = actorRefTask |> (Async.AwaitTask >> Async.RunSynchronously)  //or use task computation expression
+                let resolution = 
+                    iActorRef |> Option.ofObj |> Option.isNone |> fun isNone ->
+                        if isNone then
+                            let msg = sprintf "Unable to resolve server actor for connection path: %s - caller: %s " akkaAddress.ActorPath callerID
+                            AddressResolution.Error (ExecutionError msg)
+                        else
+                            AddressResolution.Resolved iActorRef
+                //console.log toConsole( "qq Resolved address for caller %s : %s" callerID (iActorRef.Path.ToStringWithAddress())
+                {akkaAddress with AddressResolution = resolution}
+            with 
+            | e -> 
+                let msg = sprintf "Unable to resolve actor for caller %s : %s :%s" callerID akkaAddress.ActorPath e.Message
+                toConsole( sprintf "Error Did not Resolve address %s  (%s)" akkaAddress.ActorPath msg)
+                {akkaAddress with AddressResolution = AddressResolution.Error (ExecutionError msg)}
+
+
+    let tryDispatchMsg(actorSystem: ActorSystem) (location:ActorLocation<'Msg>) (callerID: string) (msg: 'Msg) 
+        :Result<option<ActorLocation<'Msg>>,FailureReason>  =
+
+        toConsole( sprintf "yyy Dispatching for %s to %s" callerID location.ActorName)
+        match location.AddressResolution with 
+        | AddressResolution.Resolved actorRef ->
+            //console.log toConsole( "Actor for %s is resolved jj" callerID
+            msg |> actorRef.Tell                
+            Ok None
+        | _x -> 
+            // try and resolve from path
+            match resolveAddress(actorSystem, location, callerID).AddressResolution with 
+            | AddressResolution.Resolved actorRef ->
+                msg |> actorRef.Tell
+                Ok (Some {location with AddressResolution = AddressResolution.Resolved actorRef;})
+            | _x -> 
+                let msg = sprintf "Error Unable to resolve actor for %s : %s" location.ActorPath callerID
+                Error (OtherReason msg)
+
+
+    let tryDispatchMsg3(actorSystem: ActorSystem, msg: 'Msg, onFailure: FailureReason -> unit, callerID: string) (location:ActorLocation<'Msg>) =
+        // this is intended for use in recipes where we need to inform recipe if we can't deliver a message
+        // otherwise the message itself is assumed to carry the callback
+        //console.log toConsole( "yyy Dispatching for %s" callerID
+        match location.AddressResolution with 
+        | AddressResolution.Resolved actorRef ->
+            //console.log toConsole( "Actor for %s is resolved jj" callerID   
+            msg |> actorRef.Tell
+        | _x -> 
+            // try and resolve from path
+            match resolveAddress(actorSystem, location, callerID).AddressResolution with 
+            | AddressResolution.Resolved actorRef ->
+                msg |> actorRef.Tell
+            | _x -> 
+                let msg = sprintf "Error Unable to resolve actor for %s : %s" location.ActorPath callerID
+            
+                toConsole(msg)
+                onFailure(OtherReason msg)
+                
+
+    let tryResolve(actorSystem: ActorSystem, callerID: string)  (location:ActorLocation<'Msg>) =
+        //console.log toConsole( "oo resolving for %s" callerID
+        match location.AddressResolution with 
+        | AddressResolution.Resolved actorRef ->
+            //console.log toConsole( "Actor for %s is resolved jj" callerID
+            Ok location
+        | _x -> 
+            // try and resolve from path
+            match resolveAddress(actorSystem, location, callerID).AddressResolution with 
+            | AddressResolution.Resolved actorRef ->
+                Ok ({location with AddressResolution = AddressResolution.Resolved actorRef;})
+            | _x -> 
+                let msg = sprintf "Unable to resolve actor for %s : %s" location.ActorPath callerID
+                Error (OtherReason msg)
+
+
+
+    let makeBadAd(name, msg: string, path:string) = {
+        AddressResolution = AddressResolution.Error (OtherReason msg);
+        ActorPath = path;
+        ActorName = name
     }
-    with
-        //instance members defined in Tweega.AkkaRouter.Mailbox  - why keep these separate?
-        static member EmptyLocation() =
-            {
-                ActorPath = "";
-                AddressResolution = AddressResolution.None
-            }
 
-        member this.tryDispatchMsgz(actorSystem: ActorSystem, msg: 'Msg) =
-            match this.AddressResolution with 
-            | AddressResolution.Resolved actorRef ->
-                msg |> actorRef.Tell
-                Ok None
-            | _x -> 
-                // try and resolve from path
-                match ActorLocation.resolveAddress(actorSystem, this, "tryDispatchMsgz should not be in use").AddressResolution with 
-                | AddressResolution.Resolved actorRef ->
-                    msg |> actorRef.Tell
-                    Ok (Some {ActorPath = this.ActorPath; AddressResolution = AddressResolution.Resolved actorRef;})
-                | _x -> 
-                    let msg = sprintf "Unable to resolve actor for %s" this.ActorPath
-                    Error (OtherReason msg)
+    let makeLocation(name:string, path:string, ar: AddressResolution) = {
+        AddressResolution = ar;
+        ActorPath = path
+        ActorName = name;
+    }
 
-        member this.tryDispatchMsg2(actorSystem: ActorSystem, msg: 'Msg, callerID: string) =
-            toConsole( sprintf "yyy Dispatching for %s" callerID)
-            match this.AddressResolution with 
-            | AddressResolution.Resolved actorRef ->
-                //console.log toConsole( "Actor for %s is resolved jj" callerID
-                msg |> actorRef.Tell                
-                Ok None
-            | _x -> 
-                // try and resolve from path
-                match ActorLocation.resolveAddress(actorSystem, this, callerID).AddressResolution with 
-                | AddressResolution.Resolved actorRef ->
-                    msg |> actorRef.Tell
-                    Ok (Some {ActorPath = this.ActorPath; AddressResolution = AddressResolution.Resolved actorRef;})
-                | _x -> 
-                    let msg = sprintf "Error Unable to resolve actor for %s : %s" this.ActorPath callerID
-                    Error (OtherReason msg)
+    let makeLocationFromPath(name, path:string) = {
+        AddressResolution = AddressResolution.None;
+        ActorPath = path;
+        ActorName = name;
+        
+    }
 
 
-        member this.tryDispatchMsg3(actorSystem: ActorSystem, msg: 'Msg, onFailure: FailureReason -> unit, callerID: string) =
-            // this is intended for use in recipes where we need to inform recipe if we can't deliver a message
-            // otherwise the message itself is assumed to carry the callback
-            //console.log toConsole( "yyy Dispatching for %s" callerID
-            match this.AddressResolution with 
-            | AddressResolution.Resolved actorRef ->
-                //console.log toConsole( "Actor for %s is resolved jj" callerID   
-                msg |> actorRef.Tell
-            | _x -> 
-                // try and resolve from path
-                match ActorLocation.resolveAddress(actorSystem, this, callerID).AddressResolution with 
-                | AddressResolution.Resolved actorRef ->
-                    msg |> actorRef.Tell
-                | _x -> 
-                    let msg = sprintf "Error Unable to resolve actor for %s : %s" this.ActorPath callerID
-                    
-
-                    toConsole(msg)
-                    onFailure(OtherReason msg)
-                    
-
-        member this.tryResolve(actorSystem: ActorSystem, callerID: string) =
-            //console.log toConsole( "oo resolving for %s" callerID
-            match this.AddressResolution with 
-            | AddressResolution.Resolved actorRef ->
-                //console.log toConsole( "Actor for %s is resolved jj" callerID
-                Ok this
-            | _x -> 
-                // try and resolve from path
-                match ActorLocation.resolveAddress(actorSystem, this, callerID).AddressResolution with 
-                | AddressResolution.Resolved actorRef ->
-                    Ok ({ActorPath = this.ActorPath; AddressResolution = AddressResolution.Resolved actorRef;})
-                | _x -> 
-                    let msg = sprintf "Unable to resolve actor for %s : %s" this.ActorPath callerID
-                    Error (OtherReason msg)
-
-
-        static member postMessage<'Msg>(iActorRef: IActorRef) (msg: 'Msg) =
-            // wrap this in a try tk?
-            iActorRef.Tell msg
-
-        static member  makeBadAd(msg: string, path:string) = {
-            AddressResolution = AddressResolution.Error (OtherReason msg);
-            ActorPath = path;
-        }
-
-        static member  makeLocation(path:string, ar: AddressResolution) = {
-            AddressResolution = ar;
-            ActorPath = path;
-        }
-
-        static member  makeLocationFromPath(path:string) = {
-            AddressResolution = AddressResolution.None;
-            ActorPath = path;
-        }
-
-        static member  resolveAddress(callerActorSystem: ActorSystem, akkaAddress:ActorLocation<'Msg>, callerID:string)  =
+    // should we be allowing dirct access to AddressResolutions? tk        
+    let resolveAddress2(callerActorSystem: ActorSystem, akkaAddress:ActorLocation<'Msg>, callerID: string)  =
+        
+        match akkaAddress.AddressResolution with
+        | AddressResolution.Resolved _iActorRef ->
+            akkaAddress
             
-            match akkaAddress.AddressResolution with
-            | AddressResolution.Resolved _iActorRef ->
-                akkaAddress
-                
-            | _ ->
-                try
-                    let actorRefTask = callerActorSystem.ActorSelection(akkaAddress.ActorPath).ResolveOne(System.TimeSpan.FromSeconds(10.0))
-                    let iActorRef = actorRefTask |> (Async.AwaitTask >> Async.RunSynchronously)  //or use task computation expression
-                    let resolution = 
-                        iActorRef |> Option.ofObj |> Option.isNone |> fun isNone ->
-                            if isNone then
-                                let msg = sprintf "Unable to resolve server actor for connection path: %s - caller: %s " akkaAddress.ActorPath callerID
-                                AddressResolution.Error (ExecutionError msg)
-                            else
-                                AddressResolution.Resolved iActorRef
-                    //console.log toConsole( "qq Resolved address for caller %s : %s" callerID (iActorRef.Path.ToStringWithAddress())
-                    {akkaAddress with AddressResolution = resolution}
-                with 
-                | e -> 
-                    let msg = sprintf "Unable to resolve actor for caller %s : %s :%s" callerID akkaAddress.ActorPath e.Message
-                    toConsole( sprintf "Error Did not Resolve address %s  (%s)" akkaAddress.ActorPath msg)
-                    {akkaAddress with AddressResolution = AddressResolution.Error (ExecutionError msg)}
-
-
-        static member resolveAddress2(callerActorSystem: ActorSystem, akkaAddress:ActorLocation<'Msg>, callerID: string)  =
-            
-            match akkaAddress.AddressResolution with
-            | AddressResolution.Resolved _iActorRef ->
-                akkaAddress
-                
-            | _ ->
-                try
-                    let actorRefTask = callerActorSystem.ActorSelection(akkaAddress.ActorPath).ResolveOne(System.TimeSpan.FromSeconds(10.0))
-                    let iActorRef = actorRefTask |> (Async.AwaitTask >> Async.RunSynchronously)  //or use task computation expression
-                    let resolution = 
-                        iActorRef |> Option.ofObj |> Option.isNone |> fun isNone ->
-                            if isNone then
-                                let msg = sprintf "Unable to resolve server actor for connection path: %s - caller: %s " akkaAddress.ActorPath callerID
-                                AddressResolution.Error (ExecutionError msg)
-                            else
-                                AddressResolution.Resolved iActorRef
-                    toConsole(sprintf  "zz Resolved address %s" (iActorRef.Path.ToStringWithAddress()))
-                    {akkaAddress with AddressResolution = resolution}
-                with 
-                | e -> 
-                    let msg = sprintf "Unable to resolve actor for %s :%s" akkaAddress.ActorPath e.Message
-                    toConsole( sprintf "Error zzz Did not Resolve address %s  (%s)" akkaAddress.ActorPath callerID)
-                    {akkaAddress with AddressResolution = AddressResolution.Error (ExecutionError msg)}
+        | _ ->
+            try
+                let actorRefTask = callerActorSystem.ActorSelection(akkaAddress.ActorPath).ResolveOne(System.TimeSpan.FromSeconds(10.0))
+                let iActorRef = actorRefTask |> (Async.AwaitTask >> Async.RunSynchronously)  //or use task computation expression
+                let resolution = 
+                    iActorRef |> Option.ofObj |> Option.isNone |> fun isNone ->
+                        if isNone then
+                            let msg = sprintf "Unable to resolve server actor for connection path: %s - caller: %s " akkaAddress.ActorPath callerID
+                            AddressResolution.Error (ExecutionError msg)
+                        else
+                            AddressResolution.Resolved iActorRef
+                toConsole(sprintf  "zz Resolved address %s" (iActorRef.Path.ToStringWithAddress()))
+                {akkaAddress with AddressResolution = resolution}
+            with 
+            | e -> 
+                let msg = sprintf "Unable to resolve actor for %s :%s" akkaAddress.ActorPath e.Message
+                toConsole( sprintf "Error zzz Did not Resolve address %s  (%s)" akkaAddress.ActorPath callerID)
+                {akkaAddress with AddressResolution = AddressResolution.Error (ExecutionError msg)}
 
     let createAkkaMailbox<'Msg, 'State>
         (actorSystem, 
@@ -263,15 +257,23 @@ module Mailbox =
     let createAkkaMailboxInDefaultSystem<'Msg, 'State>
         (actorName: string, 
         handleMsg: 'Msg -> 'State -> 'State * Tweega.Shared.Cmd<Actor<'Msg>>, 
-        initialState: 'State) : ActorLocation<'Msg> =
+        initialState: 'State) =
         
         //(actorName: string, handleMsg: Actor<'MsgType> -> 'MsgType -> 'State -> 'State, initialState: 'State) : IActorRef =
-        let actorSystem = ActorSystemManager.get()
+        let actorSystem = ActorSystemManager.getSystem()
         let iActorRef = createAkkaMailbox(actorSystem, actorName, handleMsg, initialState)
         let location = AddressResolution.Resolved iActorRef
         let actorPath = "" //sprintf "akka.tcp://%s%s/%s" packItSystemName "@localhost:9011/user" packItAppActorName
-        ActorLocation.makeLocation<'Msg>(actorPath, location)
-         
+        let location = makeLocation(actorName, actorPath, location)
+        let dispatcher = tryDispatchMsg actorSystem location actorName
+        
+        fun (msg: 'Msg) ->
+            let dispatchResult: Result<option<ActorLocation<'Msg>>, FailureReason> = 
+                msg |> dispatcher
+            dispatchResult
+            
+
+    // we may not end up using this - orchestrator buffers won't be mail boxes
     let createBufferBoxInDefaultSystem<'bufIn, 'bufInA, 'bufOut, 'bufState>
         ( bufName: string, 
         initialBufferState: BufferState<'bufIn, 'bufInA, 'bufOut, 'bufState>) =
@@ -283,12 +285,25 @@ module Mailbox =
                 let buffState = handleBufferMessage msg bufferState
                 (buffState, Tweega.Shared.Cmd.none)
 
-        let actorSystem = ActorSystemManager.get()
+        let actorSystem = ActorSystemManager.getSystem()
         let iActorRef = createAkkaMailbox(actorSystem, bufName, handleMsg, initialBufferState)
-        let location = AddressResolution.Resolved iActorRef
+        let address = AddressResolution.Resolved iActorRef
         let actorPath = "" //sprintf "akka.tcp://%s%s/%s" packItSystemName "@localhost:9011/user" packItAppActorName
-        ActorLocation.makeLocation<BufferMsg<'bufIn, 'bufInA, 'bufOut, 'bufState>>(actorPath, location)
-        
+        let loc = makeLocation(bufName, actorPath, address) // should we be using actor locations for buffers?
+        let dispatcher = tryDispatchMsg actorSystem loc bufName
+        // the idea behind actor locations was that they might bu built on to create self-healing actors
+        // if this actor falls over we won't have access to the location to change it.
+        // we only get a new location if the path can be resolved.  If it can't then we need 
+        // to replace failure reason with something that can help resolve the situation - a recipe of some kind tk
+        // perhaps when we create the buff box we can pass in a disaster recivery handler which the actor location 
+        // would call and we would then call into a recipe that had been set up, saying where to notify when things running again
+        // the dispatcher would have to be recreated as it is bound to an immutable loc variable
+
+        fun (msg: BufferMsg<'bufIn, 'bufInA, 'bufOut, 'bufState>) ->
+            let dispatchResult: Result<option<ActorLocation<BufferMsg<'bufIn, 'bufInA, 'bufOut, 'bufState>>>, FailureReason> = 
+                msg |> dispatcher
+            dispatchResult
+            
 
     // for actors created remotely
     // StreamProxyMsgInternal<'T>>
@@ -320,20 +335,5 @@ module Mailbox =
                 failwith msg
             | Some a -> a
         Deploy(RemoteScope(address))
-    
-    // see if it is possible to add some restriction to the surface area of target actor - which would make actor location generic on this sub-message type tk
 
-
-    // type PackItAppSys = 
-    //     static let PackItAppSysh = System.create SystemConfig.packItSystemName SystemConfig.xamAppSystemConfig
-
-    type PackItAppSys private() =
-        // let jj = ActorSystem()
-
-        let pckItAppSystem = System.create SystemConfig.packItSystemName SystemConfig.xamAppSystemConfig
-
-        static let instance = new PackItAppSys()
-        static member Instance = instance
-        member __.ActorSystem
-            with get() = pckItAppSystem
-        
+// see if it is possible to add some restriction to the surface area of target actor - which would make actor location generic on this sub-message type tk

@@ -129,5 +129,5 @@ module Types =
     type InterpolationResult<'T> =
     | InterpolatedValue of 'T //TimeSeriesValue<ResolvedValue> * CanReleaseHead
     | DuplicateTimestamps
-    | Wait // timestamp after the only timestamp in the buffer
+    | AwaitingData // timestamp after the only timestamp in the buffer
     | Error of string

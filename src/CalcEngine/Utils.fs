@@ -94,7 +94,7 @@ module Utils =
                     let msg = "Timestamp after end of end of time range.  This means either that the  orchestrator is not doing its job of ensuring that all timestamps are dealt with in sequence OR buffers are not being maintained properly"
                     (InterpolationResult.Error msg)
                 | TimeInterpolation.BeforeStart ->
-                    InterpolationResult.Wait
+                    InterpolationResult.AwaitingData
                 | TimeInterpolation.DuplicateTimestamps ->
                     let msg = "Zero duration between timestamps. Unusual, but can happen if the data source publishes two values at the same time"
                     // again probably not an error.  we would need to remove duplicates from the buffer

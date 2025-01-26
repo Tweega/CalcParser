@@ -4,12 +4,22 @@ open Tweega.Shared.Types
 open Tweega.Shared.ClientStreamTypes
 open Parser.ParserTypes
 open Tweega.Discovery.Shared.Types
-open Tweega.AkkaRouter.Mailbox
+open Tweega.AkkaRouter
 open Tweega.Shared.Utils
 open Parser.ParserTypes
 open Parser.Utils
 open CalcEngine.Utils
 
+[<RequireQualifiedAccessAttribute>]
+type XTValue<'T> = 
+| Data of 'T
+| NoData    // buffer only has values from after execution time
+| AwaitingData // buffer has value from before xt (or no data at all) - another value required to interpolate
+// | Substituted?
+// | NoExactMatch?
+
+type JJ = StreamID * (XTValue<TimeSeriesValue<ResolvedValue>> * list<TimeSeriesValue<ResolvedValue>> * list<TimeSeriesValue<ResolvedValue>>)
+    
 type OrchestratorBuffer = {
     Backlog: list<TimeSeriesValue<ResolvedValue>>;
     Pending: list<TimeSeriesValue<ResolvedValue>>;
@@ -19,11 +29,16 @@ type OrchestratorBuffer = {
 
 [<RequireQualifiedAccessAttribute>]
 module OrchestratorBuffer =
+    type CanExecute = bool
     // buffer processing functionality
     let handleBufferInput() = 2 
     let tearDownBuffer() = ()
 
-    let tryGetValueForTimestamp(ts: Timestamp, ob: OrchestratorBuffer) = 
+    let tryGetValueForTimestamp(xt: Timestamp, ob: OrchestratorBuffer)
+        : XTValue<TimeSeriesValue<ResolvedValue>> * list<TimeSeriesValue<ResolvedValue>> * list<TimeSeriesValue<ResolvedValue>> = 
+        // if a buffer only has values in the future of xt, then it will never be able to supply a value
+        // we need to be able to distinguish between that and having a value that is in the past 
+        // and which could be interpolated by a value in the future
 
         let refreshPending(backlog) = 
             match backlog with 
@@ -42,59 +57,60 @@ module OrchestratorBuffer =
             | x -> x, ob.Backlog
 
         match newPending with    
-        | [] -> None, [], newBacklog //newBacklog should be emoty        
+        | [] -> XTValue.AwaitingData, [], newBacklog //newBacklog should be empty        
         | h :: t -> 
-            match h.Timestamp = ts with
+            match h.Timestamp = xt with
             | true ->
-                match ob.IsStepped with 
-                | true -> Some h, t, newBacklog // Don't need to keep h for interpolation
-                | false -> Some h, ob.Pending, newBacklog //Pending keeps current value in case it is needed for interpolation
+                // match ob.IsStepped with 
+                // | true -> Some h, t, newBacklog // Don't need to keep h for interpolation
+                // | false -> Some h, ob.Pending, newBacklog //Pending keeps current value in case it is needed for interpolation
+                XTValue.Data h, ob.Pending, newBacklog  // h may either be needed for interpolation or as the stepped value of a later time when no other data has been received
             | false ->
-                match h.Timestamp < ts with
+                match h.Timestamp < xt with
                     | true ->  
-                        // we don't have contemporary data 
-                        None, newPending, newBacklog
-                    | false -> // Execution time is after the next time that we havewe can interpolate a value, if required
+                        // we will never be able to supply a value for xt
+                        XTValue.NoData, newPending, newBacklog
+                    | false -> // Execution time is after the next time that we have so we can interpolate a value, if required
                         match t with 
                         | [] -> // can't interpolate
                             match ob.IsStepped with 
                             | true -> 
-                                Some h, t, newBacklog // Don't need to keep h for interpolation
+                                XTValue.Data h, t, newBacklog // Don't need to keep h for interpolation
                                 //None, [],[]
                             | false -> 
                                 // let interpolatedRV = interpolate()
-                                None, ob.Pending, newBacklog //Pending keeps current value in case it is needed for interpolation
+                                XTValue.AwaitingData, ob.Pending, newBacklog //Pending keeps current value in case it is needed for interpolation
 
                         | next :: rest ->
                             // we might be able to interpolate
                             match ob.IsStepped with 
-                            | true -> Some h, t, newBacklog // Don't need to  interpolate
+                            | true -> XTValue.Data h, t, newBacklog // Don't need to  interpolate
                             | false -> 
                                 
-                                match interpolateRVs(h, next, ts) with 
+                                match interpolateRVs(h, next, xt) with 
                                 | InterpolationResult.InterpolatedValue (tsv, canReleaseHead) ->
                                     match canReleaseHead with
                                     | true ->
-                                        Some tsv, t, newBacklog
+                                        XTValue.Data tsv, t, newBacklog
                                     | false -> 
-                                        Some tsv, newPending, newBacklog
+                                        XTValue.Data tsv, newPending, newBacklog
                                 | InterpolationResult.DuplicateTimestamps -> 
                                     // Ignore duplicate timestamps.  
                                     // remove buffer head and return a Wait signal so that  we don't execute yet. 
                                     // then when another value comes in from whatever source
                                     // the current execution time stamp will run again on updated pending state
                                     // this will mean that the last value for this timestamp will be the one used
-                                    None, t, newBacklog
-                                | InterpolationResult.Wait -> // timestamp after the only timestamp in the buffer
-                                    None, newPending, newBacklog
+                                    XTValue.AwaitingData, t, newBacklog
+                                | InterpolationResult.AwaitingData -> // xt after the only timestamp in the buffer
+                                    XTValue.AwaitingData, newPending, newBacklog
 
                                 | InterpolationResult.Error msg -> 
                                     toConsole (sprintf "Error interpolating values: %s" msg)
                                     // or then we simply ignore the bad val as with duplicate timestamps
-                                    // this may mean that some caluculations are thrown away
+                                    // this may mean that some calculations are thrown away
                                     // what we want to avoid is getting a bad value into the head of the interpolation
-                                    let {Timestamp = ts; Value = hValue} = h
-                                    let {Timestamp = ts; Value = nextValue} = next
+                                    let {Timestamp = _tsH; Value = hValue} = h
+                                    let {Timestamp = _tsNext; Value = nextValue} = next
 
                                     let cleanPending = 
                                         match hValue, nextValue with 
@@ -109,7 +125,7 @@ module OrchestratorBuffer =
                                         | _ -> 
                                             rest  // this should not be possible
                                 
-                                    None, cleanPending, newBacklog 
+                                    XTValue.NoData, cleanPending, newBacklog //NoData tells orchestrator to abandon this xt
 
                                 
     let addToBuffer(tsv: TimeSeriesValue<ResolvedValue>, ob: OrchestratorBuffer) = 
@@ -118,10 +134,17 @@ module OrchestratorBuffer =
 
 module Orchestrator =
     
+    [<RequireQualifiedAccess>]
+    type OrchestratorAdmin =
+        | Teardown
+        // | Pause?
 
+
+    [<RequireQualifiedAccess>]
     type OrchestratorAPI =
         | NewValues of TaggedValues<TimeSeriesValue<ResolvedValue>>
         | StreamStatusUpdate of StreamID * StreamStatus
+        | Admin of OrchestratorAdmin
 
     type OrchestratorState = {
         InputBuffers: Map<StreamID, OrchestratorBuffer>
@@ -337,65 +360,107 @@ module Orchestrator =
                     ) acc
                 ) []  // folding because we may have several strings ["the cat sat on the mat"; "how do you do"]
 
+        () // REMOVE THIS! tk
+
     let handleMsg msg state =
         match msg with
-        | NewValues {Tag = tag; Values = values} ->
-            let yy = 
+        
+        | OrchestratorAPI.Admin _j -> 
+            toConsole "Admin message received in orchestrator api handler"
+            state, Cmd.none
+
+        
+        | OrchestratorAPI.NewValues {Tag = tag; Values = values} ->
+            let (orchestratorState, cmd) = 
                 match state.InputBuffers with 
                 | Exists tag ob -> 
                     // add input to input buffer
-                    let (newSchedule, newBacklog) = 
-                        taggedTSVs.Values |>
-                        List.fold(fun ((accSchedule:Set<Timestamp>), (accBacklog: list<TimeSeriesValue<ResolvedValue>>)) ({Timestamp = ts; Value = _v } as tsv) ->
-                            (Set.add ts accSchedule, tsv :: accBacklog)
-                        ) state.ExecutionSchedule, ob.Backlog
+                    let (newSchedule, newTSVs) = 
+                        values |>
+                        List.fold( 
+                            fun ((accSchedule:Set<Timestamp>), (accBacklog: list<TimeSeriesValue<ResolvedValue>>)) // accumulators
+                                ({Timestamp = ts; Value = _v } as tsv) -> 
+                                    (Set.add ts accSchedule, tsv :: accBacklog)
+                        ) (state.ExecutionSchedule, ob.Backlog)
 
                     //  
             
                     // get the next execution time from this updated schedule
                     let maybeXT = 
-                        match Set.isEmpty newSchedule with 
-                        | true -> // this would require a TaggedTSV to carry an empty payload, which is unlikely
-                            toConsole("Tagged TSV with an empty payload!!")
-                            None
+                        match Set.isEmpty newSchedule with                         
                         | false -> 
                             let xt = Set.minElement newSchedule
+                            
                             // check with each of the buffers whether they can supply a value for this time stamp
-                            let initialAcc:Option<list<StreamID * TimeSeriesValue<ResolvedValue> * list<TimeSeriesValue<ResolvedValue>> * list<TimeSeriesValue<ResolvedValue>>>> = (Some [])
                             state.InputBuffers |>
-                            Map.toList |>
+                            Map.toList |>   //store as a list on state.  this won't ever change so can avoid always converting to a list
                             List.map(fun (streamID, ob) ->
-                                let maybeNewBuffers = OrchestratorBuffer.tryGetValueForTimestamp(xt, ob)
-                                (streamID, maybeNewBuffers)
+                                let newBuffers = OrchestratorBuffer.tryGetValueForTimestamp(xt, ob)
+                                (streamID, newBuffers)
                             )
                             // from list<maybes> we want a maybe of list
-                            |> List.fold(fun acc (streamID, maybeBuffers) ->
-                                match acc with 
-                                | Some acc' ->
-                                    match maybeBuffers with 
-                                    | ((Some tsv), newPending, newBacklog) ->
-                                        Some ((streamID, tsv, newPending, newBacklog) :: acc')
-                                    | _ -> acc
-                                | None -> acc
-                                
-                            ) initialAcc
-            
+                            |> List.fold(fun ((canExecute: bool), (b: list<JJ>)) ((streamID, (xtValue, _nenwP, _newB)) as newBuffers) ->
+                            // ) (false, [])
+                                match canExecute with 
+                                | true ->
+                                    match xtValue with 
+                                    | XTValue.Data tsv ->
+                                        // this buffer can supply a value
+                                        // JJ = StreamID * XTValue<TimeSeriesValue<ResolvedValue>> * list<TimeSeriesValue<ResolvedValue>> * list<TimeSeriesValue<ResolvedValue>>
+    
+                                        (true, newBuffers :: b)
+
+                                    | _ -> (false, newBuffers :: b )
+                                    
+
+                                    // WORKING HERE
+                                    
+                                    // XTValue.AwaitingData ->
+                                    //     // can't execute right now so wait for new values to come in
+                                    //     (false, newBuffers)
+                                    //     // if we are awating data might the buffers have changed?
+
+                                    // | XTValue.NoData -> 
+                                    //     // buffer will never be a ble to provide a value for this timestamp
+                                    //     // discard this xt
+                                    //     toConsole(sprintf "Discarding execution time %A for tag %s") xt streamID
+                                    //     acc //change this so that we drop xt from the schedule
+                                    //     (false, newBuffers)
+                                    
+                                    
+                                    // | ((Some tsv), newPending, newBacklog) ->
+                                    //     Some ((streamID, tsv, newPending, newBacklog) :: acc')
+                                    //     (true, newBuffers)
+                                    // | _ -> ac
+                                | false ->
+                                    (false, (streamID, newBuffers)) :: b
+                                    
+                                ) (true, [])
+                        | true -> // this would require a TaggedTSV to carry an empty payload, which is unlikely
+                            toConsole("Tagged TSV with an empty payload!!")
+                            (false, [])
+
                     match maybeXT with 
-                    | Some buffers -> 
+                    | Some updatedBuffers -> 
                         // Perform calculations or further processing
-                        buffers |>
+                        updatedBuffers |>
+
                         List.iter(fun (streamID, _, _, _) -> 
-                            printfn "Can supply value for xt: %A %s" xt streamID
+                            printfn "Can supply value for xt: %A %s" 1 streamID
                         )
-                
+                        let m = 
+                            updatedBuffers |> Map.ofList
+
                         { state with InputBuffers = updatedBuffers; ExecutionSchedule = newSchedule }, Cmd.none
 
-            | None -> 
-                // unable to get values for all inputs at time xt
-                { state with InputBuffers = updatedBuffers; ExecutionSchedule = newSchedule }, Cmd.none
+                    | None -> 
+                        // unable to get values for all inputs at time xt
+                        { state with InputBuffers = updatedBuffers; ExecutionSchedule = newSchedule }, Cmd.none
+                | _ -> state, Cmd.none
 
-        
-        | StreamStatusUpdate (streamId, status) ->
+            orchestratorState
+
+        | OrchestratorAPI.StreamStatusUpdate (streamId, status) ->
             // Update stream status
             let updatedStatuses = 
                 state.StreamStatuses |> Map.add streamId status
@@ -405,23 +470,35 @@ module Orchestrator =
     let createOrchestrator (name: string) 
         (streamSources: (StreamID * (StreamAPI -> unit)) list) =
     
-        let initialState = { Buffers = Map.empty; StreamStatuses = Map.empty }
+        let initialState = { InputBuffers = Map.empty; StreamStatuses = Map.empty; ExecutionBuffer = []; ExecutionSchedule = Set.empty }
+
         // create a buffer for each stream source
-        let orchestratorLocation = 
-            createAkkaMailboxInDefaultSystem<OrchestratorAPI, OrchestratorState> 
+        let orchestratorMsgHandler = 
+            Tweega.AkkaRouter.ActorLocation.createAkkaMailboxInDefaultSystem<OrchestratorAPI, OrchestratorState> 
                 (name, handleMsg, initialState)
         
+        let callback (taggedTSVs: TaggedValues<TimeSeriesValue<ResolvedValue>>) =
+                //actorRef.Tell (NewValues taggedTSVs)
+                let orchestratorMsg:OrchestratorAPI = OrchestratorAPI.NewValues taggedTSVs
+                // forward this to orchestrator
+                orchestratorMsg |> orchestratorMsgHandler
+
+        let streamStatusCB(_a, _b, _c, _d) = (toConsole "stream status message received")
+        let boxedCB = box callback
         // Set up subscriptions for all stream sources
         streamSources 
         |> List.iter (fun (streamId, streamSource) ->
-            let callback (taggedTSVs: TaggedValues<TimeSeriesValue<ResolvedValue>>) =
-                actorRef.Tell (NewValues taggedTSVs)
-            streamSource (StreamAPI.Subscribe (streamId, callback))
+            let msg:StreamAPI = StreamAPI.StreamSubscribe (streamId, boxedCB, streamStatusCB )
+            
+            msg |> streamSource 
         )
 
-        actorRef
+        // return a function that will forward OrchestratorAPI messages
+        fun (jj) ->
 
-        1
+
+        
+        
     
 
 
